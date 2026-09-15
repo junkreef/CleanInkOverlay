@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>CleanInkOverlay – 配信オーバーレイ</title>
+<!--
+  OBS ブラウザソース用の 1920x1080 ページ (GET /overlay)。ゲーム画面は左上 1600x900 に重ねる前提で、
+  右の縦列 (x 1600-1920) にセッション戦績、下の帯 (y 900-1080) に最新バトルと直近のバトルを描く。
+  データは GET /api/overlay (?since= は URL からそのまま渡す)、更新は WebSocket /ws の match_saved / session / recorder。
+  URL 例: http://127.0.0.1:8000/overlay            (セッション = バックエンド起動から / POST /api/overlay/session でリセット)
+          http://127.0.0.1:8000/overlay?since=today  (今日の試合)   ?since=all (全部)   &limit=6 (直近の枚数)
+          http://127.0.0.1:8000/overlay?demo=1       (5 秒ごとに架空の試合を足して演出を確認する。DB には書かない)
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Mochiy+Pop+One&family=Bangers&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink-yellow: #f1f83a; --ink-pink: #ff2e93; --ink-cyan: #2ee6ff; --ink-purple: #7b4dff; --ink-orange: #ff7a1a; --ink-green: #7cf53a;
+    --night: #17132e; --paper: #fffdf5; --muted: #a9a3d1; --dim: #6f68a3; --edge: #0d0a1f; --rim: #35306a;
+    --win: var(--ink-yellow); --lose: #8e7bff;
+    --jp: "Mochiy Pop One", "M PLUS Rounded 1c", "Hiragino Maru Gothic ProN", "Yu Gothic UI", "Meiryo", sans-serif;
+    --num: "Bangers", "Mochiy Pop One", "Impact", sans-serif;
+    --bounce: cubic-bezier(.2, 1.6, .4, 1);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; background: var(--night); color: var(--paper); font-family: var(--jp); }
+  body { position: relative; }
+
+  /* ---------- background: night ink + halftone + splats ---------- */
+  .bg { position: absolute; inset: 0; background:
+      radial-gradient(700px 900px at 1800px 300px, #2b2260 0%, transparent 60%),
+      radial-gradient(1200px 400px at 500px 1080px, #2a1f55 0%, transparent 60%),
+      linear-gradient(160deg, #1a1536 0%, var(--night) 60%, #120f26 100%); }
+  .halftone { position: absolute; inset: 0; opacity: .18; pointer-events: none;
+      background-image: radial-gradient(circle at 2px 2px, #fff 1.3px, transparent 1.6px); background-size: 14px 14px;
+      -webkit-mask-image: linear-gradient(180deg, transparent 0 880px, #000 930px); mask-image: linear-gradient(180deg, transparent 0 880px, #000 930px); }
+  svg.splats { position: absolute; inset: 0; width: 1920px; height: 1080px; pointer-events: none; }
+
+  /* ---------- game window frame (game video sits on top at 0,0 1600x900) ---------- */
+  .game { position: absolute; left: 0; top: 0; width: 1600px; height: 900px; background: #0b0918; border-right: 8px solid var(--ink-yellow); border-bottom: 8px solid var(--ink-yellow); border-bottom-right-radius: 22px; box-shadow: 10px 10px 0 #0006; }
+  .game .hint { position: absolute; inset: 0; display: grid; place-items: center; color: #3a3360; font-size: 42px; letter-spacing: .1em; }
+  .game .hint small { display: block; text-align: center; font-size: 20px; color: #2c2650; margin-top: 8px; }
+
+  /* ---------- shared card look ---------- */
+  .card { position: absolute; background: linear-gradient(180deg, #27204f 0%, #1e1841 100%); border: 4px solid var(--edge); border-radius: 22px; box-shadow: 0 0 0 4px #ffffff10 inset, 8px 8px 0 #0c0a1c; }
+  .tag { position: absolute; left: -12px; top: -20px; background: var(--ink-yellow); color: var(--night); font-size: 20px; line-height: 1; padding: 9px 16px 8px; border-radius: 12px; transform: rotate(-3deg); box-shadow: 5px 5px 0 #0c0a1c; white-space: nowrap; z-index: 5; }
+  .tag.pink { background: var(--ink-pink); color: #fff; } .tag.cyan { background: var(--ink-cyan); }
+  .outline { paint-order: stroke fill; -webkit-text-stroke: 6px var(--edge); }
+  .num { font-family: var(--num); letter-spacing: .02em; }
+  .tile { background: var(--edge); border-radius: 14px; border: 3px solid var(--rim); }
+
+  /* ---------- right column: session (320 px wide) ---------- */
+  #session { left: 1620px; top: 34px; width: 280px; height: 1012px; padding: 26px 16px 16px; }
+  #live { display: flex; align-items: center; justify-content: center; gap: 8px; background: var(--edge); border: 3px solid var(--rim); color: var(--muted); border-radius: 999px; padding: 4px 14px; font-size: 16px; }
+  #live .dot { width: 12px; height: 12px; border-radius: 50%; background: #4a4478; }
+  #live.on { border-color: var(--ink-pink); color: #fff; } #live.on .dot { background: var(--ink-pink); box-shadow: 0 0 10px var(--ink-pink); animation: pulse 1.2s infinite; }
+  #live.battle { border-color: var(--ink-green); } #live.battle .dot { background: var(--ink-green); box-shadow: 0 0 10px var(--ink-green); }
+  @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.35); } }
+
+  .score { display: grid; grid-template-columns: 1fr auto 1fr; align-items: end; text-align: center; margin-top: 18px; }
+  .score .n { font-size: 104px; line-height: .9; display: inline-block; }
+  .score .w { color: var(--win); } .score .l { color: var(--lose); }
+  .score .lab { font-size: 17px; color: var(--muted); margin-top: 4px; letter-spacing: .15em; }
+  .score .sep { font-size: 48px; color: #4a4478; padding: 0 4px 22px; }
+  .rate { display: flex; align-items: baseline; justify-content: center; gap: 12px; margin-top: 10px; }
+  .rate .pct { font-size: 40px; color: var(--ink-cyan); }
+  .rate .pct small { font-size: 18px; margin-left: 2px; }
+  .rate .games { font-size: 16px; color: var(--muted); }
+  .streak-row { height: 56px; display: flex; justify-content: center; align-items: center; margin-top: 4px; }
+  .streak { transform: rotate(-4deg); font-size: 22px; padding: 6px 20px; border-radius: 999px; background: var(--ink-orange); color: #fff; box-shadow: 4px 4px 0 #0c0a1c; display: none; }
+  .streak.lose { background: var(--ink-purple); } .streak.show { display: block; } .streak.pop { animation: pop .6s var(--bounce); }
+
+  .kda { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 4px; }
+  .kda > div { padding: 10px 4px 6px; text-align: center; }
+  .kda .v { font-size: 38px; line-height: 1; display: inline-block; } .kda .lbl { font-size: 13px; color: var(--muted); margin-top: 4px; white-space: nowrap; }
+  .kda .v.ka { color: var(--ink-green); } .kda .v.d { color: var(--ink-pink); } .kda .v.s { color: var(--ink-cyan); }
+  .kda .avg { font-size: 12px; color: var(--dim); }
+  .best { margin-top: 14px; padding: 10px 12px; font-size: 14px; color: var(--muted); display: grid; grid-template-columns: 1fr auto; row-gap: 4px; }
+  .best b { font-family: var(--num); font-size: 22px; color: #fff; letter-spacing: .02em; display: inline-block; }
+  .best .y b { color: var(--ink-yellow); } .best .g b { color: var(--ink-green); }
+  .foot { margin-top: 14px; font-size: 15px; color: var(--muted); line-height: 1.5; }
+  .foot .weapon { color: #fff; font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .foot .points { color: var(--ink-yellow); }
+  .killers { margin-top: 16px; padding: 10px 12px 8px; }
+  .killers .lbl { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .killers .row { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-top: 2px dashed #251f4a; }
+  .killers .row:first-of-type { border-top: 0; }
+  .killers .rank { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-family: var(--num); font-size: 17px; color: var(--edge); background: #3a3170; transform: rotate(-6deg); flex: none; }
+  .killers .row:nth-of-type(1) .rank { background: var(--ink-yellow); } .killers .row:nth-of-type(2) .rank { background: #d9d9e8; } .killers .row:nth-of-type(3) .rank { background: #e0a060; }
+  .killers .name { font-size: 15px; line-height: 1.2; color: #fff; flex: 1; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .killers .n { font-family: var(--num); font-size: 22px; color: var(--ink-pink); letter-spacing: .02em; flex: none; }
+  .killers .n small { font-size: 12px; color: var(--muted); font-family: var(--jp); margin-left: 2px; }
+  .killers .none { font-size: 14px; color: var(--muted); text-align: center; padding: 8px 0; }
+  .killers .row.in { animation: rowIn .5s var(--bounce) both; } .killers .row.in:nth-of-type(2) { animation-delay: .1s; } .killers .row.in:nth-of-type(3) { animation-delay: .2s; }
+  @keyframes rowIn { 0% { transform: translateX(40px); opacity: 0; } 100% { transform: none; opacity: 1; } }
+  .foot2 { position: absolute; left: 16px; right: 16px; bottom: 14px; padding-top: 8px; border-top: 2px dashed var(--rim); font-size: 12px; color: var(--dim); line-height: 1.6; }
+  .empty { position: absolute; inset: 0; display: none; place-items: center; text-align: center; font-size: 22px; color: var(--muted); padding: 24px; }
+  .empty.show { display: grid; } .empty .big { font-size: 34px; color: #fff; margin-bottom: 8px; animation: bob 1.6s ease-in-out infinite; }
+  @keyframes bob { 0%, 100% { transform: translateY(0) rotate(-2deg); } 50% { transform: translateY(-10px) rotate(2deg); } }
+
+  /* ---------- bottom band (180 px high): latest match + recent ---------- */
+  #latest { left: 20px; top: 922px; width: 660px; height: 138px; padding: 14px 18px 8px; }
+  #latest .head { display: flex; align-items: baseline; gap: 12px; padding-right: 150px; }
+  #latest .stage { font-size: 26px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #latest .rule, #latest .time { font-size: 14px; color: var(--muted); white-space: nowrap; } #latest .time { color: var(--dim); }
+  .stamp { position: absolute; right: 16px; top: -24px; font-size: 54px; line-height: 1; transform: rotate(6deg); }
+  .stamp.win { color: var(--win); } .stamp.lose { color: var(--lose); } .stamp.draw { color: var(--muted); }
+  .paint { margin-top: 6px; position: relative; height: 24px; border-radius: 999px; background: var(--edge); overflow: hidden; border: 3px solid var(--rim); }
+  .paint .my, .paint .en { position: absolute; top: 0; bottom: 0; transition: width .9s var(--bounce); }
+  .paint .my { left: 0; background: var(--ink-yellow); } .paint .en { right: 0; background: var(--lose); }
+  .paint .lm, .paint .le { position: absolute; top: -1px; font-size: 17px; line-height: 20px; } .paint .lm { left: 10px; color: var(--night); } .paint .le { right: 10px; color: #fff; }
+  .line { display: flex; align-items: center; gap: 14px; margin-top: 6px; font-size: 16px; white-space: nowrap; overflow: hidden; }
+  .line .stat b { font-family: var(--num); font-size: 26px; margin-right: 1px; letter-spacing: .02em; display: inline-block; }
+  .line .k b { color: var(--ink-green); } .line .d b { color: var(--ink-pink); } .line .s b { color: var(--ink-cyan); } .line .p b { color: var(--ink-yellow); }
+  .line .weapon { color: var(--muted); font-size: 15px; margin-left: auto; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+  .medals { display: flex; gap: 6px; margin-top: 5px; min-height: 20px; }
+  .medal { font-size: 12px; padding: 2px 9px; border-radius: 999px; background: #3a3170; color: #fff; }
+  .medal.gold { background: linear-gradient(180deg, #ffe066, #e0a400); color: #3b2a00; } .medal.silver { background: linear-gradient(180deg, #f2f2f2, #b8b8c8); color: #2b2b3a; }
+  #latest .none { font-size: 22px; color: var(--muted); margin-top: 30px; text-align: center; }
+
+  #recent { position: absolute; left: 704px; top: 922px; width: 892px; height: 138px; }
+  #recent .tag { left: auto; right: -6px; top: -22px; transform: rotate(3deg); }
+  .chips { position: absolute; left: 0; right: 0; top: 0; bottom: 0; display: flex; gap: 10px; align-items: stretch; padding: 0 4px; z-index: 1; }
+  .chip { flex: 1 1 0; max-width: 142px; background: linear-gradient(180deg, #27204f 0%, #1e1841 100%); border: 4px solid var(--edge); border-radius: 18px; box-shadow: 6px 6px 0 #0c0a1c; padding: 12px 6px 8px; text-align: center; position: relative; }
+  .chip:nth-child(odd) { transform: rotate(-1.5deg); } .chip:nth-child(even) { transform: rotate(1.5deg); }
+  .chip .res { font-size: 32px; line-height: 1; } .chip.win .res { color: var(--win); } .chip.lose .res { color: var(--lose); } .chip.draw .res { color: var(--muted); }
+  .chip .pct { font-size: 16px; margin-top: 2px; } .chip .pct span { color: var(--muted); }
+  .chip .kd { font-size: 15px; margin-top: 2px; } .chip .kd .k { color: var(--ink-green); } .chip .kd .d { color: var(--ink-pink); }
+  .chip .st { font-size: 11px; color: var(--dim); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chip .idx { position: absolute; left: -8px; top: -10px; background: var(--edge); color: var(--muted); font-size: 12px; border-radius: 999px; padding: 1px 8px; border: 2px solid var(--rim); }
+  .chip.new::after { content: "NEW!"; position: absolute; right: -10px; top: -14px; background: var(--ink-pink); color: #fff; font-size: 13px; padding: 3px 8px; border-radius: 999px; transform: rotate(8deg); box-shadow: 3px 3px 0 #0c0a1c; }
+
+  /* ---------- animations for a freshly saved match ---------- */
+  @keyframes pop { 0% { transform: scale(.6) rotate(-8deg); opacity: 0; } 100% { transform: scale(1) rotate(-4deg); opacity: 1; } }
+  @keyframes flash { 0% { transform: scale(.94); filter: brightness(1.8); } 100% { transform: scale(1); filter: none; } }
+  .flash { animation: flash .9s var(--bounce); }
+  @keyframes stampIn { 0% { transform: scale(4) rotate(-20deg); opacity: 0; } 55% { transform: scale(.9) rotate(8deg); opacity: 1; } 75% { transform: scale(1.12) rotate(5deg); } 100% { transform: scale(1) rotate(6deg); } }
+  .enter .stamp { animation: stampIn .7s cubic-bezier(.3, 1.4, .5, 1) .25s both; }
+  @keyframes wobble { 0% { transform: rotate(0); } 25% { transform: rotate(-3deg); } 50% { transform: rotate(2.5deg); } 75% { transform: rotate(-1.5deg); } 100% { transform: rotate(0); } }
+  .enter .head .stage { animation: wobble .8s ease-in-out .3s; transform-origin: left center; }
+  @keyframes chipIn { 0% { transform: translateX(-90px) scale(.5) rotate(-25deg); opacity: 0; } 60% { transform: translateX(8px) scale(1.08) rotate(2deg); opacity: 1; } 100% { transform: translateX(0) scale(1) rotate(-1.5deg); } }
+  .chip.new { animation: chipIn .8s var(--bounce) both; z-index: 2; }
+  @keyframes chipShiftOdd { 0% { transform: translateX(-152px) rotate(-1.5deg); } 100% { transform: translateX(0) rotate(-1.5deg); } }
+  @keyframes chipShiftEven { 0% { transform: translateX(-152px) rotate(1.5deg); } 100% { transform: translateX(0) rotate(1.5deg); } }
+  .chips.shift .chip:not(.new):nth-child(odd) { animation: chipShiftOdd .6s var(--bounce) .1s both; }
+  .chips.shift .chip:not(.new):nth-child(even) { animation: chipShiftEven .6s var(--bounce) .1s both; }
+  @keyframes bump { 0% { transform: scale(1); } 35% { transform: scale(1.45) rotate(-6deg); } 65% { transform: scale(.92) rotate(3deg); } 100% { transform: scale(1); } }
+  .bump { animation: bump .7s var(--bounce); }
+  @keyframes medalIn { 0% { transform: translateY(24px) scale(.3); opacity: 0; } 100% { transform: none; opacity: 1; } }
+  .enter .medal { animation: medalIn .5s var(--bounce) both; } .enter .medal:nth-child(2) { animation-delay: .15s; } .enter .medal:nth-child(3) { animation-delay: .3s; }
+
+  /* ink burst + flying drops over the bottom band */
+  #burst { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; pointer-events: none; opacity: 0; transform-origin: 800px 990px; }
+  #burst.go { animation: burst 1.6s ease-out; }
+  @keyframes burst { 0% { opacity: 0; transform: scale(.2); } 15% { opacity: 1; } 100% { opacity: 0; transform: scale(1.6); } }
+  .drops { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; pointer-events: none; overflow: visible; }
+  .drop { position: absolute; left: 800px; top: 990px; width: 26px; height: 26px; margin: -13px; border-radius: 50%; opacity: 0; }
+  .drop.fly { animation: fly 1.3s cubic-bezier(.1, .7, .3, 1) both; }
+  @keyframes fly { 0% { transform: translate(0, 0) scale(1.4); opacity: 1; } 70% { opacity: 1; } 100% { transform: translate(var(--dx), var(--dy)) scale(.1); opacity: 0; } }
+  .banner { position: absolute; left: 380px; top: 940px; font-size: 96px; line-height: 1; transform: rotate(-6deg); opacity: 0; pointer-events: none; -webkit-text-stroke: 10px var(--edge); }
+  .banner.win { color: var(--ink-yellow); } .banner.lose { color: var(--lose); }
+  .banner.go { animation: banner 1.8s cubic-bezier(.2, 1.4, .4, 1) both; }
+  @keyframes banner { 0% { opacity: 0; transform: translateY(80px) scale(.3) rotate(-30deg); } 20% { opacity: 1; transform: translateY(0) scale(1.15) rotate(-6deg); } 30% { transform: scale(1) rotate(-6deg); } 80% { opacity: 1; transform: translateY(0) scale(1) rotate(-6deg); } 100% { opacity: 0; transform: translateY(-40px) scale(1.2) rotate(-6deg); } }
+</style>
+</head>
+<body>
+<div class="bg"></div>
+<svg class="splats" id="splats"></svg>
+<div class="halftone"></div>
+
+<div class="game"><div class="hint">GAME 1600×900<small>この領域の上にゲーム映像を重ねる</small></div></div>
+
+<!-- session -->
+<section class="card" id="session">
+  <div class="tag">セッション戦績</div>
+  <div id="live"><span class="dot"></span><span id="live-text">記録オフ</span></div>
+  <div id="session-body">
+    <div class="score">
+      <div><div class="n num w outline" id="wins">0</div><div class="lab">WIN</div></div>
+      <div class="sep num">-</div>
+      <div><div class="n num l outline" id="losses">0</div><div class="lab">LOSE</div></div>
+    </div>
+    <div class="rate"><span class="pct num" id="winpct">--<small>%</small></span><span class="games" id="games">0 試合</span></div>
+    <div class="streak-row"><div class="streak" id="streak"></div></div>
+    <div class="kda">
+      <div class="tile"><div class="v num ka" id="ka">0</div><div class="lbl">たおした</div><div class="avg" id="ka-avg"></div></div>
+      <div class="tile"><div class="v num d" id="deaths">0</div><div class="lbl">やられた</div><div class="avg" id="d-avg"></div></div>
+      <div class="tile"><div class="v num s" id="sp">0</div><div class="lbl">スペシャル</div><div class="avg" id="sp-avg"></div></div>
+    </div>
+    <div class="best tile">
+      <span class="g">最多たおした</span><span class="g"><b id="best-ka">0</b></span>
+      <span class="y">最高塗りポイント</span><span class="y"><b id="best-points">0</b>p</span>
+    </div>
+    <div class="foot"><div class="weapon" id="weapons"></div><div class="points num" id="points"></div></div>
+    <div class="killers tile"><div class="lbl">やられた武器 TOP3</div><div id="killers"></div></div>
+  </div>
+  <div class="foot2"><div id="since"></div><div id="alltime"></div></div>
+  <div class="empty" id="session-empty"><div><div class="big">バトル待ち…</div>試合が終わると<br>ここに戦績が<br>積み上がります</div></div>
+</section>
+
+<!-- latest match -->
+<section class="card" id="latest">
+  <div class="tag pink">最新バトル</div>
+  <div id="latest-body"></div>
+</section>
+
+<!-- recent matches -->
+<section id="recent">
+  <div class="tag cyan">直近のバトル</div>
+  <div class="chips" id="chips"></div>
+</section>
+
+<svg id="burst" viewBox="0 0 1920 1080"></svg>
+<div class="drops" id="drops"></div>
+<div class="banner num" id="banner"></div>
+
+<script>
+  // ------------------------------------------------------------ ink splats (seeded, so the page looks the same on every reload)
+  let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  function blob(cx, cy, r, k = 9, jitter = .45) {
+    const pts = [];
+    for (let i = 0; i < k; i++) { const a = i / k * Math.PI * 2, rr = r * (1 - jitter / 2 + rnd() * jitter); pts.push([cx + Math.cos(a) * rr, cy + Math.sin(a) * rr]); }
+    let d = ''; for (let i = 0; i < k; i++) { const p = pts[i], q = pts[(i + 1) % k], m = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2]; d += i ? ` Q ${p[0]} ${p[1]} ${m[0]} ${m[1]}` : `M ${m[0]} ${m[1]}`; }
+    return d + ' Z';
+  }
+  function splat(svg, cx, cy, r, color, opacity = 1, drops = 6) {
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g'); g.setAttribute('fill', color); g.setAttribute('opacity', opacity);
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path'); p.setAttribute('d', blob(cx, cy, r)); g.appendChild(p);
+    for (let i = 0; i < drops; i++) { const a = rnd() * Math.PI * 2, dist = r * (1.1 + rnd() * .7), c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      c.setAttribute('cx', cx + Math.cos(a) * dist); c.setAttribute('cy', cy + Math.sin(a) * dist); c.setAttribute('r', r * (.05 + rnd() * .12)); g.appendChild(c); }
+    svg.appendChild(g); return g;
+  }
+  const S = document.getElementById('splats');
+  splat(S, 1840, 60, 120, '#ff2e93', .55); splat(S, 1900, 520, 110, '#2ee6ff', .35); splat(S, 1640, 1040, 120, '#f1f83a', .45); splat(S, 1900, 860, 90, '#7cf53a', .35);
+  splat(S, 80, 1060, 130, '#7b4dff', .5); splat(S, 700, 1080, 110, '#ff2e93', .4); splat(S, 1200, 1070, 120, '#2ee6ff', .35); splat(S, 400, 1090, 90, '#7cf53a', .35);
+  splat(S, 1606, 8, 70, '#f1f83a', .8, 4);
+
+  // ------------------------------------------------------------ data
+  const qs = new URLSearchParams(location.search);
+  const since = qs.get('since'); const limit = Number(qs.get('limit') || 6); const demo = qs.get('demo') === '1';
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const fmtInt = (n) => (n ?? 0).toLocaleString('ja-JP');
+  const resultText = { win: 'WIN!', lose: 'LOSE...', draw: 'DRAW' };
+  const stateText = { IDLE: 'ロビー', WAIT_HUD: 'バトル準備中', INGAME: 'バトル中!', WAIT_RESULT: 'リザルト待ち' };
+  let lastId = null, highlightId = null;      // highlightId: the match that gets the NEW! badge (kept ~90 s, survives the periodic reload)
+
+  function medalName(m) { return /^m_[0-9a-f]+$/i.test(m.name) ? '？メダル' : m.name; }
+  function stageOf(m) { return m.stage || 'ステージ不明'; }
+
+  // numbers count up from their previous value (and bump) when animate is on
+  const shown = {};
+  function setNum(id, value, animate, fmt = String) {
+    const el = $(id); const from = shown[id] ?? value; shown[id] = value;
+    if (!animate || from === value) { el.textContent = fmt(value); return; }
+    const t0 = performance.now(), dur = 900;
+    el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump');
+    (function step(now) {
+      const k = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+      el.textContent = fmt(Math.round(from + (value - from) * e));
+      if (k < 1) requestAnimationFrame(step);
+    })(t0);
+    setTimeout(() => { if (shown[id] === value) el.textContent = fmt(value); }, dur + 50);
+  }
+
+  function renderSession(s, animate) {
+    const has = s.matches > 0;
+    $('session-body').style.visibility = has ? 'visible' : 'hidden'; $('session-empty').classList.toggle('show', !has);
+    setNum('wins', s.wins, animate); setNum('losses', s.losses, animate);
+    $('winpct').innerHTML = (s.win_pct == null ? '--' : Math.round(s.win_pct)) + '<small>%</small>';
+    $('games').textContent = `${s.matches} 試合` + (s.draws ? ` (分け ${s.draws})` : '');
+    const st = $('streak'); const show = s.streak.n >= 2; const text = s.streak.kind === 'win' ? `${s.streak.n} 連勝!!` : `${s.streak.n} 連敗…`;
+    const changed = st.textContent !== text || !st.classList.contains('show');
+    st.className = 'streak' + (s.streak.kind === 'lose' ? ' lose' : '') + (show ? ' show' : '') + (show && animate && changed ? ' pop' : '');
+    st.textContent = text;
+    setNum('ka', s.kills_assists, animate); setNum('deaths', s.deaths, animate); setNum('sp', s.specials, animate);
+    const avg = (v) => has ? `平均 ${(v / s.matches).toFixed(1)}` : '';
+    $('ka-avg').textContent = avg(s.kills_assists); $('d-avg').textContent = avg(s.deaths); $('sp-avg').textContent = avg(s.specials);
+    setNum('best-ka', s.best_ka, animate); setNum('best-points', s.best_points, animate, fmtInt);
+    $('weapons').textContent = s.weapons.length ? s.weapons.join(' / ') : '';
+    $('points').textContent = s.points ? `合計 ${fmtInt(s.points)}p 塗った` : '';
+    const kb = s.killed_by || [];
+    $('killers').innerHTML = kb.length ? kb.map((k, i) => `<div class="row ${animate ? 'in' : ''}"><span class="rank">${i + 1}</span><span class="name">${esc(k.weapon)}</span><span class="n">${k.n}<small>回</small></span></div>`).join('')
+                                        : '<div class="none">まだやられてない!</div>';
+  }
+  function renderFoot(d) {
+    const since = d.session.since;
+    $('since').textContent = since ? `セッション ${since.slice(5, 16).replace('T', ' ')} 〜` : '全期間';
+    $('alltime').textContent = `通算 ${d.all_time.matches} 試合 ${d.all_time.wins} 勝`;
+  }
+
+  function renderLatest(m, animate) {
+    const box = $('latest-body'); $('latest').classList.toggle('enter', !!animate);
+    if (!m) { box.innerHTML = '<div class="none">まだ試合がありません</div>'; return; }
+    const my = m.my_pct ?? 0, en = m.enemy_pct ?? 0, tot = Math.max(my + en, 1);
+    const wMy = (my / tot * 100).toFixed(1) + '%', wEn = (en / tot * 100).toFixed(1) + '%';
+    box.innerHTML = `
+      <div class="stamp num outline ${m.result || 'draw'}">${resultText[m.result] || '---'}</div>
+      <div class="head"><div class="stage">${esc(stageOf(m))}</div><div class="rule">${esc(m.rule || '')}</div><div class="time">${esc((m.started_at || '').slice(11, 16))}</div></div>
+      <div class="paint">
+        <div class="my" style="width:${animate ? '0%' : wMy}"></div><div class="en" style="width:${animate ? '0%' : wEn}"></div>
+        <span class="lm num">${m.my_pct != null ? my.toFixed(1) : '-'}%</span><span class="le num">${m.enemy_pct != null ? en.toFixed(1) : '-'}%</span>
+      </div>
+      <div class="line">
+        <span class="stat k"><b>${m.kills_assists ?? '-'}</b>k+a</span>
+        <span class="stat d"><b>${m.deaths ?? '-'}</b>d</span>
+        <span class="stat s"><b>${m.specials ?? '-'}</b>sp</span>
+        <span class="stat p"><b>${m.points != null ? fmtInt(m.points) : '-'}</b>p</span>
+        <span class="weapon">${esc(m.weapon || '')}</span>
+      </div>
+      <div class="medals">${(m.medals || []).map((d) => `<span class="medal ${esc(d.rank || '')}">${d.rank === 'gold' ? '🥇' : d.rank === 'silver' ? '🥈' : '🏅'} ${esc(medalName(d))}</span>`).join('')}</div>`;
+    if (animate) {                                              // paint bars grow in after the stamp lands; stat numbers bump one after another
+      setTimeout(() => { box.querySelector('.paint .my').style.width = wMy; box.querySelector('.paint .en').style.width = wEn; }, 500);
+      box.querySelectorAll('.line .stat b').forEach((b, i) => setTimeout(() => b.classList.add('bump'), 700 + i * 120));
+    }
+  }
+
+  function renderRecent(list, newId, animate) {
+    const c = $('chips');
+    c.innerHTML = list.slice(0, limit).map((m) => `
+      <div class="chip ${m.result || 'draw'} ${m.id === newId ? 'new' : ''}">
+        <span class="idx">#${m.id}</span>
+        <div class="res num outline">${m.result === 'win' ? 'WIN' : m.result === 'lose' ? 'LOSE' : '---'}</div>
+        <div class="pct num">${m.my_pct != null ? m.my_pct.toFixed(1) : '-'}<span> / ${m.enemy_pct != null ? m.enemy_pct.toFixed(1) : '-'}</span></div>
+        <div class="kd num"><span class="k">${m.kills_assists ?? '-'}</span> k+a <span class="d">${m.deaths ?? '-'}</span> d</div>
+        <div class="st">${esc(stageOf(m))}</div>
+      </div>`).join('');
+    c.classList.toggle('shift', !!animate);
+  }
+
+  function renderRecorder(r) {
+    const el = $('live'); const on = !!r?.running;
+    el.className = on ? (r.state === 'INGAME' ? 'on battle' : 'on') : '';
+    $('live-text').textContent = on ? (stateText[r.state] || '記録中') : '記録オフ';
+  }
+
+  // the "a match was just saved" show: ink burst + flying drops + WIN!/LOSE... banner + card flash
+  function celebrate(m) {
+    const color = m?.result === 'win' ? '#f1f83a' : m?.result === 'lose' ? '#8e7bff' : '#2ee6ff';
+    const b = $('burst'); b.innerHTML = ''; seed = 99;
+    splat(b, 800, 990, 200, color, .9, 10);
+    b.classList.remove('go'); void b.offsetWidth; b.classList.add('go');
+    const d = $('drops'); d.innerHTML = '';
+    for (let i = 0; i < 18; i++) {
+      const el = document.createElement('div'); const a = Math.random() * Math.PI * 2, dist = 220 + Math.random() * 420;
+      el.className = 'drop fly'; el.style.background = [color, '#ff2e93', '#2ee6ff', '#7cf53a'][i % 4];
+      el.style.setProperty('--dx', `${Math.cos(a) * dist}px`); el.style.setProperty('--dy', `${Math.sin(a) * dist * .5 - 120}px`);
+      el.style.animationDelay = `${Math.random() * .2}s`; el.style.width = el.style.height = `${14 + Math.random() * 22}px`; d.appendChild(el);
+    }
+    const bn = $('banner'); bn.textContent = m?.result === 'win' ? 'WIN!' : m?.result === 'lose' ? 'LOSE...' : 'DRAW';
+    bn.className = 'banner num ' + (m?.result || 'draw'); void bn.offsetWidth; bn.classList.add('go');
+    $('latest').classList.remove('flash'); void $('latest').offsetWidth; $('latest').classList.add('flash');
+  }
+
+  let demoState = null;                       // ?demo=1: a fake match every 5 s, rendered from the last real payload (nothing is written)
+  function demoTick(d) {
+    if (!demoState) demoState = { data: JSON.parse(JSON.stringify(d)), n: 0 };
+    const D = demoState.data, s = D.session, id = (D.last?.id || 0) + 1, win = Math.random() < .55;
+    const stages = ['ユノハナ大渓谷', 'ゴンズイ地区', 'マサバ海峡大橋', 'スメーシーワールド', 'タラポートショッピングパーク', 'クサヤ温泉'];
+    const m = { id, started_at: new Date().toISOString().slice(0, 19), rule: 'ナワバリバトル', stage: stages[id % stages.length], result: win ? 'win' : 'lose',
+      my_pct: +(win ? 45 + Math.random() * 25 : 25 + Math.random() * 20).toFixed(1), enemy_pct: 0, weapon: 'プロモデラーMG', points: 700 + Math.floor(Math.random() * 900),
+      kills_assists: Math.floor(Math.random() * 9), deaths: Math.floor(Math.random() * 7), specials: 1 + Math.floor(Math.random() * 5),
+      medals: win ? [{ name: 'ナワバリ塗りポイント No.1', rank: 'gold', position: 0 }, { name: 'm_ab12', rank: 'silver', position: 1 }] : [] };
+    m.enemy_pct = +(Math.min(99 - m.my_pct, (win ? m.my_pct - 5 - Math.random() * 20 : m.my_pct + 10 + Math.random() * 20))).toFixed(1);
+    D.recent.unshift(m); D.recent.length = Math.min(D.recent.length, 8); D.last = m; D.all_time.matches++; if (win) D.all_time.wins++;
+    s.matches++; win ? s.wins++ : s.losses++; s.win_pct = 100 * s.wins / (s.wins + s.losses);
+    s.streak = s.streak.kind === m.result ? { kind: m.result, n: s.streak.n + 1 } : { kind: m.result, n: 1 };
+    s.kills_assists += m.kills_assists; s.deaths += m.deaths; s.specials += m.specials; s.points += m.points; s.best_ka = Math.max(s.best_ka, m.kills_assists); s.best_points = Math.max(s.best_points, m.points);
+    if (!s.weapons.includes(m.weapon)) s.weapons.push(m.weapon);
+    s.killed_by = s.killed_by || []; const kw = ['スプラシューター', 'わかばシューター', 'リッター4K', 'スプラローラー', '.52ガロン'][Math.floor(Math.random() * 5)];
+    const hit = s.killed_by.find((k) => k.weapon === kw); hit ? hit.n += m.deaths : s.killed_by.push({ weapon: kw, n: m.deaths }); s.killed_by.sort((a, b) => b.n - a.n); s.killed_by.length = Math.min(3, s.killed_by.length);
+    s.results = [m.result, ...(s.results || [])].slice(0, 30);
+    return D;
+  }
+
+  async function load(announce = false) {
+    const url = '/api/overlay?limit=' + limit + (since ? '&since=' + encodeURIComponent(since) : '');
+    let d; try { d = await (await fetch(url)).json(); } catch (e) { return; }
+    if (demo) d = demoState ? demoState.data : d;
+    if (demo && announce) d = demoTick(d);
+    const newId = d.last?.id ?? null; const isNew = announce && newId !== null && newId !== lastId;
+    if (isNew) { highlightId = newId; setTimeout(() => { if (highlightId === newId) { highlightId = null; load(); } }, 90000); }
+    renderSession(d.session, isNew); renderFoot(d); renderLatest(d.last, isNew); renderRecent(d.recent, highlightId, isNew); renderRecorder(d.recorder);
+    if (isNew) celebrate(d.last);
+    lastId = newId;
+  }
+
+  // ------------------------------------------------------------ live updates: WebSocket pushes + a slow poll as a safety net
+  function connect() {
+    const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'hello') renderRecorder(msg.recorder);
+      else if (msg.type === 'recorder') renderRecorder(msg);
+      else if (msg.type === 'match_saved') setTimeout(() => load(true), 300);
+      else if (msg.type === 'match_deleted' || msg.type === 'session') load();
+    };
+    ws.onclose = () => setTimeout(connect, 2000);
+  }
+  load(); connect(); setInterval(() => load(), 15000);
+  if (demo) setInterval(() => load(true), 5000);
+</script>
+</body>
+</html>

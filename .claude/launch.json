@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "backend-testdb",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "app.backend", "--db", "work/tmp/t1/test2.db", "--port", "8000"],
+      "port": 8000
+    },
+    {
+      "name": "backend",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "app.backend", "--port", "8000"],
+      "port": 8000
+    },
+    {
+      "name": "backend-live",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "app.backend", "--live", "--port", "8000"],
+      "port": 8000
+    }
+  ]
+}

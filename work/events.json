@@ -1,0 +1,392 @@
+[
+ {
+  "match": 1,
+  "t": 68.17,
+  "rel": 23.5,
+  "type": "hud_death",
+  "slot": 0,
+  "team": "ally",
+  "dur": 6.7
+ },
+ {
+  "match": 1,
+  "t": 71.83,
+  "rel": 27.2,
+  "type": "hud_death",
+  "slot": 4,
+  "team": "enemy",
+  "dur": 8.0
+ },
+ {
+  "match": 1,
+  "t": 74.83,
+  "rel": 30.2,
+  "type": "hud_death",
+  "slot": 1,
+  "team": "ally",
+  "dur": 7.7
+ },
+ {
+  "match": 1,
+  "t": 78.67,
+  "rel": 34.0,
+  "type": "hud_death",
+  "slot": 0,
+  "team": "ally",
+  "dur": 3.8
+ },
+ {
+  "match": 1,
+  "t": 84.33,
+  "rel": 39.7,
+  "type": "hud_death",
+  "slot": 6,
+  "team": "enemy",
+  "dur": 6.7
+ },
+ {
+  "match": 1,
+  "t": 84.5,
+  "rel": 39.8,
+  "type": "killfeed",
+  "dur": 4.8
+ },
+ {
+  "match": 1,
+  "t": 94.67,
+  "rel": 50.0,
+  "type": "hud_death",
+  "slot": 3,
+  "team": "ally",
+  "dur": 14.4
+ },
+ {
+  "match": 1,
+  "t": 115.0,
+  "rel": 70.3,
+  "type": "hud_death",
+  "slot": 6,
+  "team": "enemy",
+  "dur": 7.5
+ },
+ {
+  "match": 1,
+  "t": 115.0,
+  "rel": 70.3,
+  "type": "killfeed",
+  "dur": 4.8
+ },
+ {
+  "match": 1,
+  "t": 115.5,
+  "rel": 70.8,
+  "type": "hud_death",
+  "slot": 2,
+  "team": "ally",
+  "dur": 7.8
+ },
+ {
+  "match": 1,
+  "t": 115.83,
+  "rel": 71.2,
+  "type": "hud_death",
+  "slot": 7,
+  "team": "enemy",
+  "dur": 6.0
+ },
+ {
+  "match": 1,
+  "t": 127.83,
+  "rel": 83.2,
+  "type": "hud_death",
+  "slot": 7,
+  "team": "enemy",
+  "dur": 11.2
+ },
+ {
+  "match": 1,
+  "t": 132.17,
+  "rel": 87.5,
+  "type": "hud_death",
+  "slot": 1,
+  "team": "ally",
+  "dur": 7.5
+ },
+ {
+  "match": 1,
+  "t": 138.17,
+  "rel": 93.5,
+  "type": "hud_death",
+  "slot": 0,
+  "team": "ally",
+  "dur": 5.7
+ },
+ {
+  "match": 1,
+  "t": 146.33,
+  "rel": 101.7,
+  "type": "hud_death",
+  "slot": 7,
+  "team": "enemy",
+  "dur": 9.2
+ },
+ {
+  "match": 1,
+  "t": 146.5,
+  "rel": 101.8,
+  "type": "hud_death",
+  "slot": 0,
+  "team": "ally",
+  "dur": 8.5
+ },
+ {
+  "match": 1,
+  "t": 150.0,
+  "rel": 105.3,
+  "type": "hud_death",
+  "slot": 2,
+  "team": "ally",
+  "dur": 5.5
+ },
+ {
+  "match": 1,
+  "t": 150.0,
+  "rel": 105.3,
+  "type": "death_bubble",
+  "dur": 0.5
+ },
+ {
+  "match": 1,
+  "t": 158.0,
+  "rel": 113.3,
+  "type": "hud_death",
+  "slot": 7,
+  "team": "enemy",
+  "dur": 7.7
+ },
+ {
+  "match": 1,
+  "t": 173.33,
+  "rel": 128.7,
+  "type": "hud_death",
+  "slot": 7,
+  "team": "enemy",
+  "dur": 3.8
+ },
+ {
+  "match": 1,
+  "t": 181.17,
+  "rel": 136.5,
+  "type": "hud_death",
+  "slot": 7,
+  "team": "enemy",
+  "dur": 3.8
+ },
+ {
+  "match": 1,
+  "t": 192.17,
+  "rel": 147.5,
+  "type": "hud_death",
+  "slot": 0,
+  "team": "ally",
+  "dur": 7.8
+ },
+ {
+  "match": 1,
+  "t": 216.67,
+  "rel": 172.0,
+  "type": "hud_death",
+  "slot": 6,
+  "team": "enemy",
+  "dur": 7.5
+ },
+ {
+  "match": 1,
+  "t": 216.83,
+  "rel": 172.2,
+  "type": "killfeed",
+  "dur": 4.8
+ },
+ {
+  "match": 2,
+  "t": 323.17,
+  "rel": 19.0,
+  "type": "hud_death",
+  "slot": 0,
+  "team": "ally",
+  "dur": 4.7
+ },
+ {
+  "match": 2,
+  "t": 343.83,
+  "rel": 39.7,
+  "type": "hud_death",
+  "slot": 4,
+  "team": "enemy",
+  "dur": 7.8
+ },
+ {
+  "match": 2,
+  "t": 354.67,
+  "rel": 50.5,
+  "type": "hud_death",
+  "slot": 6,
+  "team": "enemy",
+  "dur": 8.5
+ },
+ {
+  "match": 2,
+  "t": 363.17,
+  "rel": 59.0,
+  "type": "hud_death",
+  "slot": 3,
+  "team": "ally",
+  "dur": 7.5
+ },
+ {
+  "match": 2,
+  "t": 372.83,
+  "rel": 68.7,
+  "type": "hud_death",
+  "slot": 1,
+  "team": "ally",
+  "dur": 7.5
+ },
+ {
+  "match": 2,
+  "t": 385.83,
+  "rel": 81.7,
+  "type": "hud_death",
+  "slot": 4,
+  "team": "enemy",
+  "dur": 7.8
+ },
+ {
+  "match": 2,
+  "t": 386.0,
+  "rel": 81.8,
+  "type": "killfeed",
+  "dur": 4.8
+ },
+ {
+  "match": 2,
+  "t": 393.67,
+  "rel": 89.5,
+  "type": "hud_death",
+  "slot": 6,
+  "team": "enemy",
+  "dur": 8.5
+ },
+ {
+  "match": 2,
+  "t": 403.0,
+  "rel": 98.8,
+  "type": "hud_death",
+  "slot": 1,
+  "team": "ally",
+  "dur": 5.7
+ },
+ {
+  "match": 2,
+  "t": 408.33,
+  "rel": 104.2,
+  "type": "hud_death",
+  "slot": 3,
+  "team": "ally",
+  "dur": 6.3
+ },
+ {
+  "match": 2,
+  "t": 416.5,
+  "rel": 112.3,
+  "type": "hud_death",
+  "slot": 0,
+  "team": "ally",
+  "dur": 6.5
+ },
+ {
+  "match": 2,
+  "t": 419.17,
+  "rel": 115.0,
+  "type": "hud_death",
+  "slot": 1,
+  "team": "ally",
+  "dur": 3.8
+ },
+ {
+  "match": 2,
+  "t": 419.33,
+  "rel": 115.2,
+  "type": "death_bubble",
+  "dur": 0.2
+ },
+ {
+  "match": 2,
+  "t": 422.83,
+  "rel": 118.7,
+  "type": "death_bubble",
+  "dur": 0.2
+ },
+ {
+  "match": 2,
+  "t": 429.83,
+  "rel": 125.7,
+  "type": "hud_death",
+  "slot": 3,
+  "team": "ally",
+  "dur": 4.8
+ },
+ {
+  "match": 2,
+  "t": 457.17,
+  "rel": 153.0,
+  "type": "hud_death",
+  "slot": 6,
+  "team": "enemy",
+  "dur": 7.5
+ },
+ {
+  "match": 2,
+  "t": 460.0,
+  "rel": 155.8,
+  "type": "death_bubble",
+  "dur": 1.5
+ },
+ {
+  "match": 2,
+  "t": 462.33,
+  "rel": 158.2,
+  "type": "death_bubble",
+  "dur": 0.3
+ },
+ {
+  "match": 2,
+  "t": 480.5,
+  "rel": 176.3,
+  "type": "hud_death",
+  "slot": 6,
+  "team": "enemy",
+  "dur": 6.2
+ },
+ {
+  "match": 2,
+  "t": 480.67,
+  "rel": 176.5,
+  "type": "killfeed",
+  "dur": 2.0
+ },
+ {
+  "match": 2,
+  "t": 483.83,
+  "rel": 179.7,
+  "type": "killfeed",
+  "dur": 0.8
+ },
+ {
+  "match": 2,
+  "t": 486.5,
+  "rel": 182.3,
+  "type": "death_bubble",
+  "dur": 0.2
+ }
+]
