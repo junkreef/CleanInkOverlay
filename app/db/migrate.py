@@ -2,8 +2,9 @@
 
 DBs written by the raw-SQL era (work/db.py, no alembic_version table) are recognised, backed up next to the
 file (splatoon.db.bak-<date>-pre-orm), topped up with the columns that era added by ALTER, stamped as
-revision 0001 and then migrated like any other. The store calls `upgrade()` on start, so the launchers need
-nothing; `python -m app.db upgrade --db PATH` does it by hand.
+revision 0001 and then migrated like any other.
+Existing files are migrated only on request: `uv run python -m app.db upgrade [--db PATH]` (stop the backend
+first). The store creates a missing file itself but refuses an outdated one (`require_current`).
 """
 import os, shutil, sqlite3, time
 from alembic import command
@@ -75,6 +76,19 @@ def adopt_legacy(db_path, log=print):
     finally:
         con.close()
     command.stamp(alembic_config(db_path), BASELINE)
+
+
+class SchemaOutdated(RuntimeError):
+    pass
+
+
+def require_current(db_path):
+    """raise SchemaOutdated when the file's revision is not the code's head (or the file is pre-ORM)"""
+    cur, head = current_revision(db_path), head_revision()
+    if cur != head:
+        raise SchemaOutdated(f'{db_path}: schema revision {cur or "(pre-ORM)"} but this code needs {head}. '
+                             f'Stop the backend and run:  uv run python -m app.db upgrade --db "{db_path}"  (a backup is taken first)')
+    return head
 
 
 def upgrade(db_path, log=print):

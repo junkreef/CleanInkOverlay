@@ -3,8 +3,9 @@
 
 It is a plain Python module, not a network server: the recorder and the web backend import it. Both can
 run in one process (the backend starts the recorder as a thread) or separately (SQLite in WAL mode).
-The DB layer is SQLAlchemy (models / queries / migrations live in app/db); opening a file migrates it to the
-current schema first (a pre-ORM file is backed up next to itself before that).
+The DB layer is SQLAlchemy (models / queries / migrations live in app/db). A missing file is created at the
+current schema; an existing file whose schema is behind is refused with a message, and migrated only when
+asked: `uv run python -m app.db upgrade` (backs up a pre-ORM file next to itself first).
 In-process notifications go through `store.events` (subscribe(topic, callback) / publish): topics are
 'match_saved' {id}, 'match_deleted' {id}, 'signatures_changed' {}.
 
@@ -20,7 +21,7 @@ from sqlalchemy import delete, func, select, update
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 WORK = os.path.join(ROOT, 'work')
 if WORK not in sys.path: sys.path.insert(0, WORK)
-from app.db import make_engine, make_session_factory, upgrade, Match, MatchPlayer, Event, Medal, Timeline
+from app.db import make_engine, make_session_factory, upgrade, require_current, Match, MatchPlayer, Event, Medal, Timeline
 from app.db import queries
 from signatures import Library
 
@@ -59,7 +60,10 @@ class Store:
         self.bubbles_dir = os.path.join(root, 'samples', 'bubbles')
         self.events = Events()
         self._lock = threading.RLock()                       # serialises the writers of this process
-        upgrade(self.db_path)                                # create / migrate the file (Alembic, app/db/migrate.py)
+        if not os.path.exists(self.db_path) or os.path.getsize(self.db_path) == 0:
+            upgrade(self.db_path)                            # a new file is created at the current schema
+        else:
+            require_current(self.db_path)                    # an existing file is migrated only on request (python -m app.db upgrade)
         self.engine = make_engine(self.db_path)
         self.Session = make_session_factory(self.engine)
         self._sig = None

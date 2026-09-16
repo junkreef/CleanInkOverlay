@@ -166,6 +166,18 @@ def test_failed_migration_rolls_back(tmp_path):
     assert upgrade(db, log=lambda *_: None) == ('0001', head_revision()) and schema_diff(db) == []
 
 
+def test_store_refuses_outdated_db_but_creates_missing_one(tmp_path):
+    """migrations of existing files are an explicit step (python -m app.db upgrade), never a side effect of opening"""
+    db = str(tmp_path / 'old.db')
+    con = sqlite3.connect(db); con.executescript(LEGACY_SCHEMA); con.commit(); con.close()
+    with pytest.raises(migrate.SchemaOutdated, match='python -m app.db upgrade'):
+        Store(db_path=db)
+    assert current_revision(db) is None and not [p for p in os.listdir(tmp_path) if '.bak-' in p]   # untouched, no backup
+    upgrade(db, log=lambda *_: None)
+    Store(db_path=db).close()
+    s = Store(db_path=str(tmp_path / 'fresh.db')); assert s.summary()['matches'] == 0; s.close()
+
+
 def test_check_constraints_are_enforced(tmp_path):
     s = Store(db_path=str(tmp_path / 'chk.db'))
     match, players, events, medals, timeline = sample_match()
