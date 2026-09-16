@@ -10,7 +10,8 @@ That runs regardless of state, so a screen is noticed whenever it appears; its c
 when it has been stable for a few samples. The state only says what we are accumulating:
   IDLE        nothing; a rule screen starts a match, a result screen alone stores a match without timeline
   WAIT_HUD    rule screen seen; waiting for the HUD at 3:00 (slot icons kept) and the first 2:59 (t0)
-  INGAME      timer, 8 slot states, own special gauge, killfeed name, death bubble card, own-death texts
+  INGAME      timer, 8 slot states, own special gauge (state + fill level), own paint points (once per second),
+              killfeed name, death bubble card, own-death texts
   WAIT_RESULT HUD gone; the medal screen and the result screen are picked up whenever they show up
 A rule screen while INGAME / WAIT_RESULT means the previous match was aborted or its result was skipped.
 """
@@ -36,7 +37,10 @@ KF_RECENT = 0.6                   # a known message last seen within this many s
 BUBBLE_CARD = (690, 1010, 1040, 1920)
 MIN_DEAD = 3.0; DEAD_THR = 0.25; GAP = 0.5
 BUB_CAPTURE = 0.5                 # 'やられた!' template score that starts a bubble (background stays <= 0.22)
-BUB_CROPS = 5                     # card crops kept per bubble (0.3 s apart); the best-matching one is used
+BUB_CARD_SCALES = (1.5,)          # bubble card = rule-screen card x1.5: of x1.4/1.5/1.6, 1.5 won on all 293 recorded bubble frames
+BUB_CARD_K = 0.5                  # both sides matched at half size: ~14 ms per bubble frame (3 scales: 42 ms at half size, 175 ms at full size), scores within ~0.02 of full size (14 recorded bubbles)
+BUB_KILLER = 0.5                  # best card score that names the killer (correct ~0.94, wrong <= 0.30)
+BUB_EVIDENCE_BELOW = 1.01         # save the best card crop + frame of bubbles scoring below this (samples/bubbles/); every bubble for now, 0.8 once live positives are collected
 RING_SECONDS = 15                 # small frames kept for evidence when an own death shows no bubble
 STABLE = {'rule': 3, 'medals': 3, 'result': 10}
 
@@ -67,6 +71,19 @@ def smooth(flags, gap):
             i = j
         else: i += 1
     return out
+
+
+def card_templates(cards):
+    """enemy rule-screen cards -> [(slot, [template per scale])] at the bubble matching size; None without cards"""
+    if not cards: return None
+    shrink = lambda img, k: cv2.resize(img, None, fx=k, fy=k, interpolation=cv2.INTER_AREA)
+    return [(c['slot'], [shrink(shrink(c['card'], s), BUB_CARD_K) for s in BUB_CARD_SCALES]) for c in cards[4:]]
+
+
+def card_scores(crop, tpl):
+    """full-size BUBBLE_CARD crop -> [(score, slot)] best first"""
+    small = cv2.resize(crop, None, fx=BUB_CARD_K, fy=BUB_CARD_K, interpolation=cv2.INTER_AREA)
+    return sorted(((max(float(cv2.matchTemplate(small, t, cv2.TM_CCOEFF_NORMED).max()) for t in ts), slot) for slot, ts in tpl), reverse=True)
 
 
 def classify(f):
@@ -138,13 +155,13 @@ class Recorder:
         if self.state in ('INGAME', 'WAIT_RESULT'):
             self.finish(f, t)
         elif self.state == 'IDLE' and t - self.t_last_store > 120:      # result without a rule screen (started mid-match)
-            self.m = dict(t_rule=None, cards=None, start_patches=[], samples=[], kf=[], bubbles=[], t0=t, notes='no rule screen')
+            self.m = dict(t_rule=None, card_tpl=None, start_patches=[], samples=[], kf=[], bubbles=[], t0=t, notes='no rule screen')
             self.finish(f, t)
 
     def start_match(self, f, t):
         ts = self.stamp(t)
         path = self.store.save_image(ts, 'rule', f)
-        self.m = dict(ts=ts, t_rule=t, rule_image=path, cards=read_cards(f), start_patches=[], samples=[], kf=[], bubbles=[], t0=None, notes=None)
+        self.m = dict(ts=ts, t_rule=t, rule_image=path, card_tpl=card_templates(read_cards(f)), start_patches=[], samples=[], kf=[], bubbles=[], t0=None, notes=None)
         self.state = 'WAIT_HUD'; self.t_state = t; self.ring.clear(); self.rsp_t = None
         self.log(f'[{t:8.1f}] RULE SCREEN -> waiting for HUD')
 
@@ -155,19 +172,27 @@ class Recorder:
         # a match can be aborted (connection error) and a new one started without a rule screen: timer back at 3:00
         if vis and rem == 180 and t - m['t0'] > 30:
             self.log(f'[{t:8.1f}] timer back at 3:00: previous match aborted, waiting for the new start (cards unknown)')
-            self.m = dict(m, cards=None, start_patches=[], samples=[], kf=[], bubbles=[], kf_cands=[], kf_rows=[], t0=None, notes='restarted without rule screen')
+            self.m = dict(m, card_tpl=None, start_patches=[], samples=[], kf=[], bubbles=[], kf_cands=[], kf_rows=[], pts_sec=None, t0=None, notes='restarted without rule screen')
             self.state = 'WAIT_HUD'; self.t_state = t; return
         row = dict(t=t, vis=vis, rem=rem, clock=clock)
         if vis:
             row['slots'] = [hud.slot_state(f, i) for i in range(8)]
-            row['g_or'], row['g_wh'] = hud.gauge_state(f)
+            row['g_or'], row['g_wh'] = hud.gauge_state(f); row['g_lv'] = hud.gauge_level(f)
+            sec = int(t - m['t0'])                                    # paint points: first clean read of each second (~5 ms; rolling digits fail and retry next sample)
+            if m.get('pts_sec') != sec:
+                pts, _ = hud.read_points(f, self.glyphs)
+                if pts is not None: row['pts'] = pts; m['pts_sec'] = sec
             self.killfeed(f, t)
         bub = hud.crop(f, hud.BUBBLE)
         row['bub'] = tm(bub, self.tpl_yar) if (bub.max(axis=2) < 60).mean() > 0.3 else 0.0
-        if row['bub'] > BUB_CAPTURE:
-            if not m['bubbles'] or t - m['bubbles'][-1]['t'] > 6.0: m['bubbles'].append(dict(t=t, crops=[]))
-            b = m['bubbles'][-1]
-            if len(b['crops']) < BUB_CROPS and (not b['crops'] or t - b['crops'][-1][0] >= 0.3): b['crops'].append((t, hud.crop(f, BUBBLE_CARD).copy()))
+        if row['bub'] > BUB_CAPTURE:                                  # every sample of the bubble scores the killer card; the best one is kept
+            if not m['bubbles'] or t - m['bubbles'][-1]['t'] > 6.0: m['bubbles'].append(dict(t=t, n=0, best=None, second=None))
+            b = m['bubbles'][-1]; b['n'] += 1
+            if m.get('card_tpl'):
+                crop = hud.crop(f, BUBBLE_CARD); sc = card_scores(crop, m['card_tpl'])
+                if b['best'] is None or sc[0][0] > b['best'][0]:
+                    b['best'], b['second'] = sc[0], sc[1]
+                    b['crop'] = crop.copy(); b['frame'] = cv2.resize(f, (crop.shape[0] * 16 // 9, crop.shape[0]), interpolation=cv2.INTER_AREA)   # evidence at crop height, grabbed now
         row['yar'] = tm(hud.crop(f, hud.BOTTOM), self.tpl_yar); row['rsp'] = tm(hud.crop(f, hud.RESPAWN), self.tpl_rsp)
         m['samples'].append(row)
         self.evidence(f, t, row['rsp'])
@@ -250,7 +275,7 @@ class Recorder:
         medals = []; medal_image = None
         if self.medals_pending and t - self.medals_pending['t'] < 120:
             medals = self.medals_pending['medals']; medal_image = self.medals_pending['image']; self.medals_pending = None
-        match, players, events = self.build_record(res, t, result_image)
+        match, players, events, timeline = self.build_record(res, t, result_image)
         match['medal_image'] = medal_image
         self.log(f'[{t:8.1f}] MATCH {match["result"]} {match["stage"]} {match["my_pct"]}-{match["enemy_pct"]}  players={len(players)} events={len(events)} medals={len(medals)}')
         for p in sorted(players, key=lambda p: p['slot']):
@@ -259,16 +284,30 @@ class Recorder:
             self.log(f'    {e["t_ms"]/1000:6.1f}s {str(e["clock"]):5s} {e["type"]:9s} slot={e["slot"]} target={e["target_slot"]} ({e["source"]} {e["confidence"]})')
         for md in medals:
             self.log(f'    medal {md["position"]} {md["rank"]:6s} {md["name"] or md["sig_id"]}')
+        self.bubble_evidence(ts)
+        pts = [r for r in timeline if r['points'] is not None]
+        self.log(f'    timeline {len(timeline)} s, points read in {len(pts)} s (last {pts[-1]["points"] if pts else None} at {pts[-1]["t_s"] if pts else None}s), gauge ready in {sum(r["ready"] for r in timeline)} s')
         me = next((p for p in players if p['is_self']), None)
         if me:
-            n_sp = sum(1 for e in events if e['type'] == 'special'); n_kb = sum(1 for e in events if e['type'] == 'killed_by')
-            self.log(f'    self check: specials gauge {n_sp} / result {me["specials"]}, killed_by bubbles {n_kb} / deaths {me["deaths"]}')
+            n_sp = sum(1 for e in events if e['type'] == 'special'); n_rd = sum(1 for e in events if e['type'] == 'special_ready'); n_kb = sum(1 for e in events if e['type'] == 'killed_by')
+            self.log(f'    self check: specials gauge {n_sp} (ready {n_rd}) / result {me["specials"]}, points HUD {pts[-1]["points"] if pts else None} / result {me["points"]}, killed_by bubbles {n_kb} / deaths {me["deaths"]}')
         if not self.dry:
-            mid = self.store.insert_match(match, players, events, medals); self.log(f'    -> db match id {mid}')
+            mid = self.store.insert_match(match, players, events, medals, timeline); self.log(f'    -> db match id {mid}')
         self.t_last_store = t
-        self.store.save_json(ts, '', dict(match=match, players=players, events=events, medals=medals))
+        self.store.save_json(ts, '', dict(match=match, players=players, events=events, medals=medals, timeline=timeline))
         if self.debug: self.store.save_json(ts, '_samples', m['samples'])
         self.m = None
+
+    def bubble_evidence(self, ts):
+        """log each bubble's best card score (and runner-up); below BUB_EVIDENCE_BELOW save the best crop next to the
+        frame it came from (samples/bubbles/) so a low score can be examined later. Runs whether or not the result parsed."""
+        m = self.m; t0 = m.get('t0') or 0.0
+        for b in m['bubbles']:
+            best, second = b['best'], b['second']
+            self.log(f'    bubble {b["t"] - t0:6.1f}s frames={b["n"]} best={f"{best[0]:.2f} slot{best[1]}" if best else "-"} 2nd={f"{second[0]:.2f} slot{second[1]}" if second else "-"}')
+            if best and best[0] < BUB_EVIDENCE_BELOW:
+                p = self.store.save_bubble(f'{ts}_{b["t"] - t0:05.1f}s_card{best[0]:.2f}_2nd{second[0]:.2f}', np.hstack([b['crop'], b['frame']]))
+                self.log(f'      -> {p}')
 
     def build_record(self, res, t_end, result_image):
         m = self.m; t0 = m['t0']
@@ -313,22 +352,16 @@ class Recorder:
             for i, j in death_runs[s]: ev(S[i]['t'], 'death', slot=s, source='hud', conf=round(max(r['slots'][s]['dark'] for r in S[i:j] if r['vis']), 2), dur=(j - i) * dt)
         for t in hud.special_uses(S):                             # own specials from the gauge (other players: result count only)
             ev(t, 'special', slot=self_slot, source='gauge')
+        for t in hud.special_ready(S):                            # own gauge became full (white ring)
+            ev(t, 'special_ready', slot=self_slot, source='gauge')
         if res:
             for k in m['kf']:                                     # own kills: killfeed name -> result row -> slot
                 best = max(((float(np.corrcoef(k['sig'], r['name_sig'])[0, 1]) if r['name_sig'] is not None else -1), ri) for ri, r in enumerate(rows))
                 row_slot = {v: kk for kk, v in slot_row.items()}
                 ev(k['t'], 'kill', slot=self_slot, target=row_slot.get(best[1]) if best[0] >= 0.5 else None, source='killfeed', conf=round(best[0], 2))
-            cards = m['cards']
-            for b in m['bubbles']:                                # own deaths with killer: bubble card -> rule card -> slot (best of the crops)
-                target = None; conf = None
-                if cards:
-                    best = (-1.0, None)
-                    for _, crop in b['crops']:
-                        for c in cards[4:]:
-                            sc = max(float(cv2.matchTemplate(crop, cv2.resize(c['card'], None, fx=s_, fy=s_, interpolation=cv2.INTER_AREA), cv2.TM_CCOEFF_NORMED).max()) for s_ in (1.4, 1.5, 1.6))
-                            if sc > best[0]: best = (sc, c['slot'])
-                    conf = round(best[0], 2); target = best[1] if best[0] > 0.5 else None
-                ev(b['t'], 'killed_by', slot=self_slot, target=target, source='bubble', conf=conf)
+            for b in m['bubbles']:                                # own deaths with killer: bubble card -> rule card -> slot (best frame, scored in sample())
+                best = b['best']
+                ev(b['t'], 'killed_by', slot=self_slot, target=best[1] if best and best[0] > BUB_KILLER else None, source='bubble', conf=round(best[0], 2) if best else None)
         events.sort(key=lambda e: e['t_ms'])
         started = (datetime.datetime.now() - datetime.timedelta(seconds=t_end - t0)) if self.source == 'live' else video_time(self.source, t0)
         match = dict(started_at=started.isoformat(timespec='seconds'), ended_at=None, mode=res['mode'] if res else None, rule=res['rule'] if res else None,
@@ -336,7 +369,28 @@ class Recorder:
                      my_pct=pct(res, True), enemy_pct=pct(res, False), duration_s=round(max((r['t'] for r in S if r['vis']), default=t0) - t0, 1) if S else None,
                      source='live' if self.source == 'live' else os.path.basename(self.source), rule_image=m.get('rule_image'), result_image=result_image,
                      raw_json=json.dumps(strip(res), ensure_ascii=False) if res else None, notes=m.get('notes'))
-        return match, players, events
+        return match, players, events, timeline_rows(S, t0)
+
+
+def timeline_rows(S, t0):
+    """per second since the timer start, from HUD-visible samples: points = first clean read in that second (a read
+    that breaks the non-decreasing count against both neighbours is dropped), gauge = median fill 0..1, ready = the
+    ring was white in any sample. Seconds without a visible HUD (map open, transitions) get no row."""
+    secs = {}
+    for r in S:
+        if not r['vis'] or 'g_lv' not in r: continue
+        k = int(r['t'] - t0)
+        if not 0 <= k <= 180: continue
+        d = secs.setdefault(k, dict(lv=[], ready=False, pts=None))
+        d['lv'].append(r['g_lv']); d['ready'] = d['ready'] or r['g_wh'] >= hud.READY_WHITE
+        if d['pts'] is None and 'pts' in r: d['pts'] = r['pts']
+    ks = [k for k in sorted(secs) if secs[k]['pts'] is not None]
+    for i, k in enumerate(ks):                                    # single misreads: outside [previous, next] while previous <= next
+        prev = secs[ks[i - 1]]['pts'] if i else 0; nxt = secs[ks[i + 1]]['pts'] if i + 1 < len(ks) else None
+        v = secs[k]['pts']
+        if v < prev or (nxt is not None and prev <= nxt < v): secs[k]['pts_bad'] = True
+    return [dict(t_s=k, points=None if d.get('pts_bad') else d['pts'], gauge=round(float(np.median(d['lv'])), 3), ready=int(d['ready']))
+            for k, d in sorted(secs.items())]
 
 
 def result_sane(res):

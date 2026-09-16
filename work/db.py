@@ -8,7 +8,8 @@ Design (ナワバリ first; ranked columns exist but stay NULL):
   matches        one row per match: when, stage/mode/rule, win/lose, paint %, image paths
   match_players  8 rows per match in HUD slot order (0-3 ally, 4-7 enemy): weapon + result-screen stats
   events         timeline: t_ms from timer start; death (any slot, HUD), kill (self -> target),
-                 killed_by (killer -> self), special
+                 killed_by (killer -> self), special (own activation), special_ready (own gauge became full)
+  timeline       once per second (own HUD): paint points and special gauge fill
   weapons        master from the wiki sections (class), used for grouping
 Player names are not recorded (random matchmaking, and labelling them was never used): players are identified
 within a match by HUD slot and weapon only. DBs created before 2026-09-15 still carry the unused columns
@@ -64,7 +65,7 @@ CREATE TABLE IF NOT EXISTS events (
   match_id      INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
   t_ms          INTEGER NOT NULL,             -- since timer start
   clock         TEXT,                         -- remaining time as shown ('2:38')
-  type          TEXT NOT NULL CHECK (type IN ('death', 'kill', 'killed_by', 'special')),
+  type          TEXT NOT NULL CHECK (type IN ('death', 'kill', 'killed_by', 'special', 'special_ready')),
   slot          INTEGER,                      -- subject: death -> who died, kill/killed_by -> self, special -> who used it
   target_slot   INTEGER,                      -- kill -> victim, killed_by -> killer
   weapon        TEXT,                         -- killed_by: weapon named in the bubble (when read)
@@ -73,6 +74,14 @@ CREATE TABLE IF NOT EXISTS events (
   duration_ms   INTEGER
 );
 CREATE INDEX IF NOT EXISTS events_match ON events(match_id, t_ms);
+CREATE TABLE IF NOT EXISTS timeline (             -- own HUD once per second; seconds without a visible HUD have no row
+  match_id      INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+  t_s           INTEGER NOT NULL,             -- whole seconds since timer start (0-180)
+  points        INTEGER,                      -- 塗りポイント shown top right (first clean read in the second; NULL = unread)
+  gauge         REAL,                         -- special gauge fill 0..1 (median over the second)
+  ready         INTEGER,                      -- 1 = gauge full (white ring) in the second
+  PRIMARY KEY (match_id, t_s)
+);
 CREATE TABLE IF NOT EXISTS medals (
   match_id      INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
   name          TEXT NOT NULL,                -- label, or the signature id until labelled
@@ -141,11 +150,13 @@ def _insert(con, table, row):
     return con.execute(f'INSERT INTO {table} ({",".join(cols)}) VALUES ({",".join("?" * len(cols))})', [row[c] for c in cols])
 
 
-def insert_match(con, match, players, events, medals=()):
-    """match: matches columns; players: match_players dicts (without match_id); events: events dicts. Returns match id."""
+def insert_match(con, match, players, events, medals=(), timeline=()):
+    """match: matches columns; players: match_players dicts (without match_id); events: events dicts; timeline: per-second
+    dicts (t_s, points, gauge, ready). Returns match id."""
     mid = _insert(con, 'matches', {k: v for k, v in match.items() if k != 'id'}).lastrowid
     for p in players: _insert(con, 'match_players', dict(p, match_id=mid))
     for e in events: _insert(con, 'events', dict(e, match_id=mid))
+    for r in timeline: _insert(con, 'timeline', dict(r, match_id=mid))
     for md in medals:                                    # dicts from medals.parse_medals
         _insert(con, 'medals', dict(match_id=mid, name=md.get('name') or md.get('sig_id'), rank=md.get('rank'), position=md.get('position'), sig_id=md.get('sig_id')))
     con.commit()

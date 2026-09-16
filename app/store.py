@@ -52,6 +52,7 @@ class Store:
         self.db_path = db_path or os.path.join(root, 'data', 'splatoon.db')
         self.images_dir = os.path.join(root, images_dir)
         self.misses_dir = os.path.join(root, 'samples', 'misses')
+        self.bubbles_dir = os.path.join(root, 'samples', 'bubbles')
         self.events = Events()
         self._lock = threading.RLock()
         self.con = dbmod.connect(self.db_path)
@@ -86,6 +87,12 @@ class Store:
         p = os.path.join(self.misses_dir, name + '.jpg'); cv2.imencode('.jpg', sheet, [cv2.IMWRITE_JPEG_QUALITY, 80])[1].tofile(p)
         return rel(p)
 
+    def save_bubble(self, name, sheet):
+        """best killer-card crop of a death bubble + the frame it came from -> repo-relative path"""
+        os.makedirs(self.bubbles_dir, exist_ok=True)
+        p = os.path.join(self.bubbles_dir, name + '.jpg'); cv2.imencode('.jpg', sheet, [cv2.IMWRITE_JPEG_QUALITY, 85])[1].tofile(p)
+        return rel(p)
+
     def file_path(self, relpath):
         """absolute path of a data file the web may serve; None if outside the allowed folders"""
         p = os.path.abspath(os.path.join(self.root, relpath))
@@ -98,9 +105,9 @@ class Store:
         return cv2.imdecode(np.fromfile(p, np.uint8), cv2.IMREAD_COLOR) if p else None
 
     # ------------------------------------------------------------------ matches
-    def insert_match(self, match, players, events, medals=()):
+    def insert_match(self, match, players, events, medals=(), timeline=()):
         with self._lock:
-            mid = dbmod.insert_match(self.con, match, players, events, medals)
+            mid = dbmod.insert_match(self.con, match, players, events, medals, timeline)
         self.events.publish('match_saved', {'id': mid})
         return mid
 

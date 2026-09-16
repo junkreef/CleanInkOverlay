@@ -10,7 +10,7 @@ true 0.74-0.97, runner-up <= 0.66). Dead players show a grey silhouette + X inst
 """
 import cv2, numpy as np, os, sys, json
 sys.path.insert(0, os.path.dirname(__file__))
-from result_parser import glyph_boxes, merge_boxes, norm_glyph, GLYPH_DIR
+from result_parser import glyph_boxes, merge_boxes, norm_glyph, GLYPH_DIR   # glyph sets: timer (build_timer_glyphs), points (HUD paint points, labelled by hand from clustered glyphs)
 
 SLOT_X = [(527, 597), (622, 692), (711, 781), (799, 869), (1057, 1127), (1145, 1215), (1233, 1303), (1320, 1390)]
 SLOT_Y = (38, 112)
@@ -202,13 +202,67 @@ def gauge_state(f):
     return orange, white
 
 
+GAUGE_C = (1780, 120)                  # ring centre (x, y) in the frame
+GAUGE_END = 270                        # the segmented ring runs clockwise from 12 o'clock to ~270 deg (22-23 segments, ~12 deg each); the sub icon sits at 300-330
+_ARC = None
+
+
+def gauge_level(f):
+    """-> fill 0..1 of the own special gauge: the lit arc (orange while charging / draining, white when ready; unlit
+    segments are grey V < 150) runs clockwise from 12 o'clock, so the level is where the lit run starting at 0 deg
+    ends, allowing gaps <= 20 deg: 3-6 deg between segments, ~10 deg where the ready ring's pulsing highlight dims a
+    segment (8 deg read 1.0 / 0.37 alternately while ready). Per-angle value = median V over radii 64-82."""
+    global _ARC
+    if _ARC is None:
+        ang = np.deg2rad(np.arange(0, 290)); rad = np.arange(64, 84, 2)
+        _ARC = (np.rint(GAUGE_C[1] - rad[None, :] * np.cos(ang)[:, None]).astype(int), np.rint(GAUGE_C[0] + rad[None, :] * np.sin(ang)[:, None]).astype(int))
+    v = f[_ARC[0], _ARC[1]].max(axis=2)                       # HSV value = max channel
+    lit = np.flatnonzero(np.median(v, axis=1) > 150)
+    if not len(lit) or lit[0] > 8: return 0.0
+    gaps = np.flatnonzero(np.diff(lit) > 20)
+    end = lit[gaps[0]] if len(gaps) else lit[-1]
+    return round(min(1.0, (end + 1) / GAUGE_END), 3)
+
+
+PTS_TEXT = (45, 120, 1490, 1700)       # 'NNNNp' own paint points: 4 digit boxes h 50-51 at y 19-21 in this crop, 'p' h 24 at y 50
+
+
+def read_points(f, glyphs, min_score=0.8):
+    """-> (points, min glyph score) or (None, score). The digits roll like an odometer while the count rises: a rolling
+    digit is cut / shifted, so the read is only taken when exactly 4 full-height digits are present and all match well."""
+    m = (crop(f, PTS_TEXT).min(axis=2) > 200).astype(np.uint8)
+    boxes = [b for b in glyph_boxes(m, 46, 56) if 15 <= b[1] <= 25]
+    if len(boxes) != 4 or 'points' not in glyphs.sets: return None, 0.0
+    txt, sc = glyphs.read(m, boxes, 'points')
+    return (int(txt), min(sc)) if min(sc) >= min_score else (None, min(sc))
+
+
+READY_WHITE = 0.2                      # ring white fraction while the special is ready (0.21-0.27 on the recordings, charging / draining < 0.05)
+
+
+def special_ready(samples, min_n=2):
+    """samples: recorder rows (t, vis, g_wh) -> times the own gauge became ready (first of >= min_n white samples).
+    The ready state only ends on a clearly non-white ring (activation, or respawn after dying with it), so a hidden
+    HUD (map, death) in between does not produce a second event."""
+    out = []; ready = False; run = []
+    for r in samples:
+        if not r.get('vis') or 'g_wh' not in r: continue
+        if r['g_wh'] >= READY_WHITE:
+            run.append(r['t'])
+            if not ready and len(run) >= min_n: out.append(run[0]); ready = True
+        else:
+            run = []
+            if r['g_wh'] < 0.05: ready = False
+    return out
+
+
 def special_uses(samples, min_gap=3.0):
     """samples: dicts with t, vis, g_or, g_wh (recorder rows) -> times of own special activations
     (white/ready seen within 0.5 s, then orange >= 0.3 with no white). 17/17 on the 5 recorded matches."""
     out = []; last_full = -1e9; last_ev = -1e9
     for r in samples:
         if not r.get('vis') or 'g_wh' not in r: continue
-        if r['g_wh'] >= 0.2: last_full = r['t']
+        if r['g_wh'] >= READY_WHITE: last_full = r['t']
         elif r['g_or'] >= 0.3 and r['g_wh'] < 0.05 and 0 < r['t'] - last_full <= 0.5 and r['t'] - last_ev > min_gap:
             out.append(r['t']); last_ev = r['t']
     return out
