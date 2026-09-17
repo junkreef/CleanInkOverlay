@@ -6,3 +6,4 @@ web/dist/
 work/tmp/
 data/*.db-shm
 data/*.db-wal
+data/*.db.bak-*
