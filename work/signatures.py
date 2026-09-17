@@ -1,10 +1,12 @@
 """Image signatures for fixed-font text we cannot OCR reliably (stage / mode / rule banner, medal names).
 
-A signature is the binarised white text, cropped to its bounding box and resized to 96x16.
-Same text on different screens correlates >= 0.81, different text <= 0.39, so a library of labelled
-signatures identifies stages/medals without OCR. Unknown signatures are stored with a generated id and
-can be named later (label_signature). The recorder also uses raw signatures (no library) to match a
-killfeed name against the result rows of the same match.
+signature() is the binarised white text, cropped to its bounding box and resized to 96x16: for text whose
+position varies (killfeed / result-row names, used raw by the recorder to match a killfeed name against the
+result rows of the same match). Text at a fixed screen position (result banner: result_parser.banner_signature,
+medal names: medals.banner_signature) is read from a fixed canvas instead, so a stray bright pixel cannot
+shift it. Same text correlates >= 0.8, different text well below, so a library of labelled signatures
+identifies stages/medals without OCR. Unknown signatures are stored with a generated id and can be named
+later (label_signature). work/rebuild_signatures.py regenerates the library from the stored screens.
 Player names are no longer collected: kind 'name' entries are dropped when a library is loaded or saved.
 """
 import cv2, numpy as np, os, json, hashlib
@@ -63,7 +65,7 @@ class Library:
             return None, None, 0.0
         best = (None, -1.0)
         for k, it in self.items.items():
-            if it['kind'] != kind:
+            if it['kind'] != kind or len(it['sig']) != len(sig):     # a different length = made by an older crop, never the same text
                 continue
             c = float(np.corrcoef(sig, np.array(it['sig'], np.float32))[0, 1])
             if c > best[1]:

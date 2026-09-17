@@ -20,9 +20,15 @@ NAME = (5, 45, 1110, 1320)      # player name band: only its raw signature is us
 ARROW = (0, 45, 925, 985)
 WEAPON = (-15, 55, 1040, 1130)
 PCT_L = (235, 285, 925, 1120); PCT_R = (235, 285, 1520, 1710)
-STAGE = (85, 130, 1040, 1250)    # right part of the banner: stage name
-MODE = (40, 75, 825, 980)        # "レギュラーマッチ"
-RULE = (85, 130, 825, 1035)      # "ナワバリバトル"
+# banner (top right): white text on black tags, left-aligned at a fixed origin (measured identical on every stored
+# result screen, live and video). x, y = top-left of the text, h = its height; the text is read from a fixed canvas
+# `w` px wide, so a stray bright pixel of the stage photo cannot shift it (an earlier bounding-box crop did).
+# pad = rows of the tag's top padding: where they stop being black the tag ends and the canvas is cut there.
+BANNER = {'mode': dict(x=841, y=48, h=18, w=140, pad=(41, 47)),      # "レギュラーマッチ" tag: x 825-975
+          'rule': dict(x=837, y=89, h=31, w=200, pad=None),          # "ナワバリバトル": its tag runs on into the stage name
+          'stage': dict(x=1061, y=96, h=23, w=280, pad=(86, 92))}    # the tag ends 1190-1315 depending on the name
+BANNER_SCALE = 0.5               # signature = the canvas mask at half resolution
+BANNER_THR = 0.85                # same text on another screen correlates >= 0.99, the closest different stage names 0.61
 
 
 def white_mask(bgr, thr=170):
@@ -75,6 +81,30 @@ def crop(f, r, y=0):
     return f[y + r[0]:y + r[1], r[2]:r[3]]
 
 
+def tag_end(f, x, pad, x_max):
+    """first column >= x where the black tag is over (the padding rows above the text are no longer dark)"""
+    dark = (f[pad[0]:pad[1], x:x_max].max(axis=2) < 60).mean(axis=0)
+    for i in range(0, len(dark) - 5):
+        if dark[i:i + 5].mean() < 0.5: return x + i
+    return x_max
+
+
+def banner_signature(f, kind):
+    """kind = 'mode' / 'rule' / 'stage' -> fixed-size float vector (None when there is no text). Every text of a kind
+    is laid on the same canvas, so the same text always gives the same vector and different texts differ wherever
+    their glyphs differ; identified with signatures.Library like the medal names."""
+    b = BANNER[kind]; x, y, h, w = b['x'], b['y'], b['h'], b['w']
+    x1 = x + w if b['pad'] is None else min(x + w, tag_end(f, x, b['pad'], x + w + 40) - 3)
+    band = f[y - 1:y + h + 1, x:x1]
+    m = ((band.min(axis=2) > 190) & ((band.max(axis=2).astype(int) - band.min(axis=2).astype(int)) < 40)).astype(np.uint8)
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
+    for i in range(1, n):
+        if stats[i][4] < 12: m[lab == i] = 0
+    if m.sum() < 20: return None
+    canvas = np.zeros((h + 2, w), np.uint8); canvas[:, :m.shape[1]] = m * 255
+    return cv2.resize(canvas, None, fx=BANNER_SCALE, fy=BANNER_SCALE, interpolation=cv2.INTER_AREA).astype(np.float32).ravel() / 255
+
+
 def row_glyphs(f, y):
     pm = white_mask(crop(f, POINTS, y)); pb = merge_boxes(glyph_boxes(pm, 22, 45))
     sm = white_mask(crop(f, STATS, y)); sb = glyph_boxes(sm, 9, 19)
@@ -86,8 +116,8 @@ def parse(f, icons, glyphs, lib=None):
     Player names are not read: the killfeed matching in the recorder uses the raw name signature of each row instead."""
     lib = lib or Library()
     res = {'rows': []}
-    for key, r in (('stage', STAGE), ('mode', MODE), ('rule', RULE)):
-        sid, label, sc = lib.identify(signature(crop(f, r)), key)
+    for key in ('stage', 'mode', 'rule'):
+        sid, label, sc = lib.identify(banner_signature(f, key), key, thr=BANNER_THR)
         res[key] = label; res[key + '_id'] = sid
     for label, y in RESULT_ROWS.items():
         pm, pb, sm, sb = row_glyphs(f, y)
@@ -116,9 +146,8 @@ def parse(f, icons, glyphs, lib=None):
 def seed_labels(frames, lib):
     """label the signature library from the hand-read stages of the reference frames"""
     for k in GT_STAGE:
-        sid, _, _ = lib.identify(signature(crop(frames[k], STAGE)), 'stage'); lib.label(sid, GT_STAGE[k])
-        sid, _, _ = lib.identify(signature(crop(frames[k], MODE)), 'mode'); lib.label(sid, 'レギュラーマッチ')
-        sid, _, _ = lib.identify(signature(crop(frames[k], RULE)), 'rule'); lib.label(sid, 'ナワバリバトル')
+        for kind, name in (('stage', GT_STAGE[k]), ('mode', 'レギュラーマッチ'), ('rule', 'ナワバリバトル')):
+            sid, _, _ = lib.identify(banner_signature(frames[k], kind), kind, thr=BANNER_THR); lib.label(sid, name)
     lib.save()
 
 
