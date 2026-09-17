@@ -5,7 +5,7 @@ It is a plain Python module, not a network server: the recorder and the web back
 run in one process (the backend starts the recorder as a thread) or separately (SQLite in WAL mode).
 The DB layer is SQLAlchemy (models / queries / migrations live in app/db). A missing file is created at the
 current schema; an existing file whose schema is behind is refused with a message, and migrated only when
-asked: `uv run python -m app.db upgrade` (backs up a pre-ORM file next to itself first).
+asked: `uv run python -m app.db upgrade` (backs up the file next to itself first).
 In-process notifications go through `store.events` (subscribe(topic, callback) / publish): topics are
 'match_saved' {id}, 'match_deleted' {id}, 'signatures_changed' {}.
 

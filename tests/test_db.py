@@ -1,4 +1,4 @@
-"""DB layer: fresh files, migration of pre-ORM files, the Store's read/write API, model <-> migration parity.
+"""DB layer: fresh files, model <-> migration parity, the Store's read/write API, the on-request migration policy.
     uv run pytest
 """
 import json, os, sqlite3, sys
@@ -9,27 +9,6 @@ from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from app.db import Base, make_engine, upgrade, current_revision, head_revision, migrate
 from app.store import Store
-
-# the schema work/db.py created on 2026-09-13 (before medal_image / medals.position / sig_id were added by ALTER,
-# with player-name columns, the events CHECK without special_ready, no timeline table yet, and the stat views)
-LEGACY_SCHEMA = """
-CREATE TABLE matches (id INTEGER PRIMARY KEY, started_at TEXT NOT NULL, ended_at TEXT, mode TEXT, rule TEXT, stage TEXT,
-  result TEXT CHECK (result IN ('win', 'lose', 'draw')), my_pct REAL, enemy_pct REAL, my_count INTEGER, enemy_count INTEGER,
-  knockout INTEGER, duration_s REAL, source TEXT, rule_image TEXT, result_image TEXT, raw_json TEXT, notes TEXT);
-CREATE TABLE match_players (match_id INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE, slot INTEGER NOT NULL,
-  team TEXT NOT NULL CHECK (team IN ('ally', 'enemy')), is_self INTEGER NOT NULL DEFAULT 0, name TEXT, name_sig_id TEXT, weapon TEXT,
-  weapon_score REAL, weapon_conf REAL, points INTEGER, kills_assists INTEGER, deaths INTEGER, specials INTEGER, result_row INTEGER,
-  link_score REAL, PRIMARY KEY (match_id, slot));
-CREATE TABLE events (id INTEGER PRIMARY KEY, match_id INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE, t_ms INTEGER NOT NULL,
-  clock TEXT, type TEXT NOT NULL CHECK (type IN ('death', 'kill', 'killed_by', 'special')), slot INTEGER, target_slot INTEGER,
-  weapon TEXT, source TEXT, confidence REAL, duration_ms INTEGER);
-CREATE INDEX events_match ON events(match_id, t_ms);
-CREATE TABLE medals (match_id INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE, name TEXT NOT NULL, rank TEXT);
-CREATE TABLE weapons (name TEXT PRIMARY KEY, class TEXT);
-CREATE VIEW my_matches AS SELECT m.id, m.result, p.weapon, p.points, p.kills_assists, p.deaths, p.specials
-  FROM matches m JOIN match_players p ON p.match_id = m.id AND p.is_self = 1;
-CREATE VIEW weapon_stats AS SELECT weapon, COUNT(*) AS games FROM my_matches GROUP BY weapon;
-"""
 
 
 def sample_match(started='2026-09-16T20:00:00', result='win'):
@@ -53,50 +32,34 @@ def schema_diff(db_path):
         engine.dispose()
 
 
-def table_sql(db_path, name):
-    con = sqlite3.connect(db_path)
-    try: return con.execute("SELECT sql FROM sqlite_master WHERE name = ?", (name,)).fetchone()[0]
-    finally: con.close()
-
-
 def test_fresh_db_is_created_at_head_and_matches_models(tmp_path):
     db = str(tmp_path / 'new.db')
     assert upgrade(db) == (None, head_revision())
     assert current_revision(db) == head_revision()
-    assert schema_diff(db) == []
+    assert schema_diff(db) == []                                    # `alembic revision --autogenerate` would be empty
+    assert upgrade(db) == (head_revision(), head_revision())        # no-op, no backup
+    assert not [p for p in os.listdir(tmp_path) if '.bak-' in p]
 
 
-def test_legacy_db_is_backed_up_stamped_and_migrated(tmp_path):
-    db = str(tmp_path / 'old.db')
-    con = sqlite3.connect(db); con.executescript(LEGACY_SCHEMA)
-    con.execute("INSERT INTO matches (id, started_at, result) VALUES (1, '2026-09-13T10:00:00', 'win')")
-    con.execute("INSERT INTO match_players (match_id, slot, team, is_self, name, weapon) VALUES (1, 0, 'ally', 1, 'ひらパー', 'わかばシューター')")
-    con.execute("INSERT INTO events (match_id, t_ms, type, slot) VALUES (1, 5000, 'death', 0)")
-    con.execute("INSERT INTO medals (match_id, name, rank) VALUES (1, 'ナワバリ王', 'gold'), (1, 'm_x', 'silver')")
-    con.commit(); con.close()
-    assert migrate.is_legacy(db) and current_revision(db) is None
+def test_store_refuses_outdated_db_and_upgrade_backs_up_first(tmp_path):
+    """migrations of existing files are an explicit step (python -m app.db upgrade), never a side effect of opening"""
+    db = str(tmp_path / 'old.db'); upgrade(db)
+    con = sqlite3.connect(db); con.execute("UPDATE alembic_version SET version_num = '0000'"); con.commit(); con.close()
+    with pytest.raises(migrate.SchemaOutdated, match='python -m app.db upgrade'):
+        Store(db_path=db)
+    assert current_revision(db) == '0000' and not [p for p in os.listdir(tmp_path) if '.bak-' in p]   # untouched
+    con = sqlite3.connect(db); con.execute("UPDATE alembic_version SET version_num = ?", (head_revision(),)); con.commit(); con.close()
+    Store(db_path=db).close()
 
-    logs = []
-    assert upgrade(db, log=logs.append) == ('0001', head_revision())
-    backups = [p for p in os.listdir(tmp_path) if p.startswith('old.db.bak-')]
-    assert len(backups) == 1 and any(backups[0] in l for l in logs)
-    assert schema_diff(db) == []                                   # the migrated file is exactly what the models describe
-    con = sqlite3.connect(db)
-    assert con.execute("SELECT name FROM sqlite_master WHERE type = 'view'").fetchall() == []
-    cols = {r[1] for r in con.execute('PRAGMA table_info(match_players)')}
-    assert 'name' not in cols and 'name_sig_id' not in cols and 'weapon' in cols
-    assert 'special_ready' in table_sql(db, 'events')
-    assert con.execute('SELECT id, match_id, name, rank, position, sig_id FROM medals ORDER BY id').fetchall() == [(1, 1, 'ナワバリ王', 'gold', None, None), (2, 1, 'm_x', 'silver', None, None)]
-    assert con.execute('SELECT match_id, slot, weapon FROM match_players').fetchall() == [(1, 0, 'わかばシューター')]
-    assert con.execute('SELECT t_ms, type FROM events').fetchall() == [(5000, 'death')]
+
+def test_backup_copies_the_file_next_to_itself(tmp_path):
+    """upgrade() calls this before touching an existing file; the name carries the date and the old revision"""
+    db = str(tmp_path / 'b.db'); s = Store(db_path=db); s.insert_match(*sample_match()); s.close()
+    first = migrate.backup(db, '0001'); second = migrate.backup(db, '0001')
+    assert os.path.basename(first).startswith('b.db.bak-') and first.endswith('-0001') and second == first + '-2'
+    con = sqlite3.connect(first)
+    assert con.execute('SELECT COUNT(*) FROM matches').fetchone()[0] == 1 and con.execute('PRAGMA integrity_check').fetchone() == ('ok',)
     con.close()
-    # a second open is a no-op (no new backup, no new revision)
-    assert upgrade(db) == (head_revision(), head_revision())
-    assert len([p for p in os.listdir(tmp_path) if p.startswith('old.db.bak-')]) == 1
-    # and the store can insert into it right away, including the event type the old CHECK refused
-    s = Store(db_path=db); mid = s.insert_match(*sample_match()); assert mid == 2
-    assert [e['type'] for e in s.get_match(2)['events']] == ['killed_by', 'kill', 'death', 'special_ready']
-    s.close()
 
 
 def test_store_roundtrip_and_stats(tmp_path):
@@ -139,43 +102,9 @@ def test_store_roundtrip_and_stats(tmp_path):
     s.delete_match(mid)
     assert deleted == [{'id': 1}] and s.get_match(mid) is None and s.summary()['matches'] == 1
     con = sqlite3.connect(s.db_path)                                # children went with the match (ON DELETE CASCADE)
-    assert con.execute('SELECT COUNT(*) FROM match_players WHERE match_id = 1').fetchone()[0] == 0
-    assert con.execute('SELECT COUNT(*) FROM events WHERE match_id = 1').fetchone()[0] == 0
-    assert con.execute('SELECT COUNT(*) FROM medals WHERE match_id = 1').fetchone()[0] == 0
-    assert con.execute('SELECT COUNT(*) FROM timeline WHERE match_id = 1').fetchone()[0] == 0
+    for t in ('match_players', 'events', 'medals', 'timeline'):
+        assert con.execute(f'SELECT COUNT(*) FROM {t} WHERE match_id = 1').fetchone()[0] == 0
     con.close(); s.close()
-
-
-def test_failed_migration_rolls_back(tmp_path):
-    """DDL runs inside one transaction: a migration that dies half-way leaves the file as it was (plus the stamp)"""
-    db = str(tmp_path / 'broken.db')
-    con = sqlite3.connect(db); con.executescript(LEGACY_SCHEMA)
-    con.execute("INSERT INTO matches (id, started_at, result) VALUES (1, '2026-09-13T10:00:00', 'win')")
-    con.execute('CREATE TABLE medals_new (x INTEGER)')             # collides with the rebuild of medals, after matches was rebuilt
-    con.commit(); con.close()
-    migrate.adopt_legacy(db, log=lambda *_: None)                  # backup + ALTER-era columns + stamp 0001 (not transactional, harmless)
-    before = table_sql(db, 'matches')
-    with pytest.raises(Exception):
-        upgrade(db, log=lambda *_: None)
-    con = sqlite3.connect(db)
-    names = {r[0] for r in con.execute("SELECT name FROM sqlite_master")}
-    assert 'matches_new' not in names and 'my_matches' in names and 'medals_new' in names
-    assert table_sql(db, 'matches') == before and con.execute('SELECT COUNT(*) FROM matches').fetchone()[0] == 1
-    assert current_revision(db) == '0001'                           # adopted (stamped) but not migrated
-    con.execute('DROP TABLE medals_new'); con.commit(); con.close()
-    assert upgrade(db, log=lambda *_: None) == ('0001', head_revision()) and schema_diff(db) == []
-
-
-def test_store_refuses_outdated_db_but_creates_missing_one(tmp_path):
-    """migrations of existing files are an explicit step (python -m app.db upgrade), never a side effect of opening"""
-    db = str(tmp_path / 'old.db')
-    con = sqlite3.connect(db); con.executescript(LEGACY_SCHEMA); con.commit(); con.close()
-    with pytest.raises(migrate.SchemaOutdated, match='python -m app.db upgrade'):
-        Store(db_path=db)
-    assert current_revision(db) is None and not [p for p in os.listdir(tmp_path) if '.bak-' in p]   # untouched, no backup
-    upgrade(db, log=lambda *_: None)
-    Store(db_path=db).close()
-    s = Store(db_path=str(tmp_path / 'fresh.db')); assert s.summary()['matches'] == 0; s.close()
 
 
 def test_check_constraints_are_enforced(tmp_path):

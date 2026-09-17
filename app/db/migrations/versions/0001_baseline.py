@@ -1,4 +1,4 @@
-"""baseline: the schema work/db.py used to create with raw SQL (DBs from before the SQLAlchemy move are stamped here)
+"""baseline: the schema as of the SQLAlchemy move (2026-09-17), matching app/db/models.py at that time
 
 Revision ID: 0001
 Revises:
@@ -70,7 +70,8 @@ def upgrade():
         sa.Column('points', sa.Integer()),
         sa.Column('gauge', sa.REAL()),
         sa.Column('ready', sa.Integer()))
-    op.create_table('medals',                              # no primary key yet: 0002 rebuilds it with an id
+    op.create_table('medals',
+        sa.Column('id', sa.Integer(), primary_key=True),
         sa.Column('match_id', sa.Integer(), sa.ForeignKey('matches.id', ondelete='CASCADE'), nullable=False),
         sa.Column('name', sa.Text(), nullable=False),
         sa.Column('rank', sa.Text()),

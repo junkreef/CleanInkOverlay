@@ -1,7 +1,7 @@
 """DB maintenance from the command line (replaces the old `python work/db.py ...`).
 
     uv run python -m app.db init      [--db PATH]   # create / migrate the file and load the weapon master
-    uv run python -m app.db upgrade   [--db PATH]   # migrate to the newest schema revision (backs up a pre-ORM file first)
+    uv run python -m app.db upgrade   [--db PATH]   # migrate to the newest schema revision (backs up the file first)
     uv run python -m app.db current   [--db PATH]   # print the file's revision and the code's head revision
     uv run python -m app.db stats     [--db PATH]   # print the stat tables the web shows
     uv run python -m app.db matches   [--db PATH]   # list my matches
@@ -28,7 +28,7 @@ def main():
     ap.add_argument('--db', default=DEFAULT_DB)
     a = ap.parse_args(); db = os.path.abspath(a.db)
     if a.cmd == 'current':
-        print(f'{db}: {current_revision(db) or "(pre-ORM or missing)"}   head: {head_revision()}'); return
+        print(f'{db}: {current_revision(db) or "(unversioned or missing)"}   head: {head_revision()}'); return
     before, after = upgrade(db)
     if before == after: print(f'[db] {os.path.basename(db)}: schema {after} (up to date)')
     if a.cmd in ('init', 'upgrade'):
