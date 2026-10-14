@@ -24,6 +24,7 @@ if WORK not in sys.path: sys.path.insert(0, WORK)
 from app.db import make_engine, make_session_factory, upgrade, require_current, Match, MatchPlayer, Event, Medal, Timeline
 from app.db import queries
 from signatures import Library
+from weapon_icons import IconLibrary
 
 
 class Events:
@@ -67,15 +68,23 @@ class Store:
         self.engine = make_engine(self.db_path)
         self.Session = make_session_factory(self.engine)
         self._sig = None
+        self._icons = None
 
     # ------------------------------------------------------------------ libraries (owned here, handed out to the analysers)
     def signatures(self):
         if self._sig is None: self._sig = Library()
         return self._sig
 
+    def weapon_icons(self):
+        """weapon icon templates cut from our result screens (assets/weapon_icons_captured) and their samples (data/icon_samples)"""
+        if self._icons is None:
+            self._icons = IconLibrary(os.path.join(self.root, 'assets', 'weapon_icons_captured'), os.path.join(self.root, 'data', 'icon_samples'))
+        return self._icons
+
     def save_libraries(self):
         with self._lock:
             if self._sig is not None: self._sig.save()
+            if self._icons is not None: self._icons.save()
 
     # ------------------------------------------------------------------ files
     def save_image(self, stamp, kind, frame):

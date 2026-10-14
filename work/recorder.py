@@ -18,9 +18,10 @@ A rule screen while INGAME / WAIT_RESULT means the previous match was aborted or
 import argparse, json, os, sys, time, datetime, collections
 import cv2, numpy as np
 sys.path.insert(0, os.path.dirname(__file__))
-from result_parser import parse, Glyphs, RESULT_ROWS, NAME, crop as rcrop, white_mask
+from result_parser import parse, Glyphs, RESULT_ROWS, NAME, WEAPON, crop as rcrop, white_mask
 from signatures import signature, Library
-from weapon_match import load_main_weapons, imread_u
+from weapon_match import load_main_weapons, load_wiki_icons, icon_source, imread_u
+from weapon_icons import harvestable, lossless
 from scan_screens import looks_like_rule
 from live_result_watch import looks_like_result
 from rule_screen import read_cards
@@ -98,8 +99,8 @@ def classify(f):
 class Recorder:
     def __init__(self, source, store, dry=False, log=print, debug=False):
         self.source, self.store, self.dry, self.log, self.debug = source, store, dry, log, debug
-        self.icons = load_main_weapons()                      # 56 px composites for the result screen
-        self.icons_big = load_main_weapons(size=256)          # RGBA for HUD icon linking
+        self.load_icons()
+        self.wiki_icons = load_wiki_icons() if icon_source() != 'captured' else {}   # aligns / trims new captured templates
         self.glyphs = Glyphs(); self.lib = store.signatures()
         self.tpl_yar = cv2.imread(os.path.join(TPL_DIR, 'yarareta.png'), 0)
         self.tpl_rsp = cv2.imread(os.path.join(TPL_DIR, 'respawn.png'), 0)
@@ -256,6 +257,24 @@ class Recorder:
                 if old: k = max(old, key=lambda k: k['t_last']); k['sig'] = c['sig']; k['t_last'] = t
                 else: kf.append(dict(t=c['t'], t_last=t, sig=c['sig']))
 
+    def load_icons(self):
+        d = self.store.weapon_icons().captured_dir
+        self.icons = load_main_weapons(captured_dir=d)                # 56 px composites for the result screen
+        self.icons_big = load_main_weapons(size=256, captured_dir=d)  # RGBA for HUD icon linking
+
+    def harvest_icons(self, f, res, ts):
+        """keep confidently matched result-row icons as samples of our own weapon templates (weapon_icons.py), so the
+        wiki icons get replaced as weapons show up; reload the icon sets when a template changed"""
+        lib = self.store.weapon_icons(); changed = []
+        for row, y in zip(res['rows'], RESULT_ROWS.values()):
+            if not (harvestable(row) and lib.wants(row['weapon'], f'{ts}_{row["row"]}')): continue
+            c = rcrop(f, WEAPON, y)
+            if lossless(c) and lib.add_sample(row['weapon'], c, f'{ts}_{row["row"]}', wiki=self.wiki_icons.get(row['weapon'])):
+                changed.append(row['weapon'])
+        if changed:
+            self.store.save_libraries(); self.load_icons()
+            self.log(f'    weapon icon samples added: {", ".join(changed)}')
+
     # ------------------------------------------------------------ end of match
     def finish(self, f, t):
         m = self.m; self.state = 'IDLE'
@@ -269,6 +288,7 @@ class Recorder:
                 res = None; f = None
         m['ts'] = ts
         if f is not None:
+            if not self.dry: self.harvest_icons(f, res, ts)
             result_image = self.store.save_image(ts, 'result', f)
             for row, y in zip(res['rows'], RESULT_ROWS.values()):
                 row['name_sig'] = signature(rcrop(f, NAME, y))          # raw look of the name, matched against killfeed rows below (not stored, not identified)
