@@ -10,7 +10,7 @@ icons (assets/weapon_icons, not redistributable) only for weapons without one. C
 (default both) picks the sets, e.g. `captured` runs as a copy without the wiki icons would.
 """
 import cv2, numpy as np, os, json
-from weapon_icons import imread_u, without_shadow, ICON_PX, CAPTURED_DIR
+from weapon_icons import imread_u, without_shadow, crop_bands, ICON_PX, CAPTURED_DIR
 
 ROOT = os.path.join(os.path.dirname(__file__), '..')
 ICON_DIR = os.path.join(ROOT, 'assets', 'weapon_icons')
@@ -59,11 +59,19 @@ def load_captured_icons(size=ICON_PX, captured_dir=CAPTURED_DIR):
     return out
 
 
+class IconSet(dict):
+    """{name: RGBA icon} that also knows which icons are our captured templates (`captured`): only those are checked for
+    parts they lack (match's 'variant' stage), the wiki icons are drawn differently"""
+    def __init__(self, *a, captured=(), **k):
+        super().__init__(*a, **k); self.captured = set(captured)
+
+
 def load_main_weapons(size=ICON_PX, source=None, captured_dir=CAPTURED_DIR):
     """{weapon name: RGBA icon at `size`}: our captured templates, the wiki icons for the weapons we have none of"""
     source = source or icon_source()
-    out = load_wiki_icons(size) if source in ('wiki', 'both') else {}
-    if source in ('captured', 'both'): out.update(load_captured_icons(size, captured_dir))
+    out = IconSet(load_wiki_icons(size) if source in ('wiki', 'both') else {})
+    if source in ('captured', 'both'):
+        cap = load_captured_icons(size, captured_dir); out.update(cap); out.captured |= set(cap)
     return out
 
 
@@ -106,7 +114,10 @@ SHAPE_TOL = 4       # a crop pixel belongs to the icon's shape when it is this f
 SHAPE_OPEN = 3      # the shape difference of two templates is opened by this: a solid part (a scope) stays, 1-2 px fringes go
 SHAPE_CLOSE = 0.15  # shape siblings are compared by shape up to this natural-score gap: a dark scope barely moves the colour
                     # score, so リッター4K led 4Kスコープ by 0.05-0.08 on scoped rows
-SHAPE_SIBLING = 0.2  # ... when the parts only one of them has are at most this share of a's shape (4K: 46 px of ~600)
+SIBLING_CROSS = 0.9  # ... when the two templates match each other this well (the scope pairs 0.91-0.99; other pairs <= 0.91)
+SIBLING_PART = 60    # ... and the part only one of them has is scope-sized (the scope pairs 40-53 px; カーボンローラーANGL / デコ,
+                     # the only other pair this alike, 113 px). Looser rules sent replicas and unrelated weapons through
+                     # shape_decision, which then guessed (パラシェルター read as オーダーシェルター レプリカ, 2026-10-15)
 _SHAPE_REGIONS = {}  # (a, b) -> (icon a, icon b, a's shape, part only b has, part only a has); entries hold the icons, see _COMPOSITES
 
 
@@ -158,10 +169,60 @@ def shape_decision(crop_bgr, icons, a, b):
     return (b if share_b > share_a else a), float(abs(share_b - share_a))
 
 
+VARIANT_PART = 15    # px: a solid part (opened 3x3) of the crop that the matched template lacks, or the other way round, or
+VARIANT_COLOUR = 12  # whose colour is off the template's by more than this, means the icon is another weapon that has no
+                     # template yet: a variant of the matched one (オーダー レプリカ, デコ, コラボ, a scope). With the right template
+                     # left out of the stored rows, 174 of the 203 sibling matches outside the 4K pairs were caught and none of
+                     # 1311 right matches tripped it (2026-10-15). The 4K scopes are too dark for SHAPE_TOL; both 4K templates exist.
+VARIANT_NEIGHBOURS = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))   # a pixel's own and its 4 neighbours' values count
+
+
+def extra_parts(crop_bgr, t):
+    """(shape px, colour px): solid parts where the crop and template t disagree, tolerant of the rows rendering icons up to
+    a pixel apart: a crop pixel only counts against the template's pixel and its 4 neighbours (shape: off the panel colour by
+    more than SHAPE_TOL where none of them is, or the other way round; colour: outside their range by more than
+    VARIANT_COLOUR; a 3x3 box was too lenient, letting replicas' recoloured stripes through). What is left is opened 3x3;
+    the separator bands are left out."""
+    g = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY); dark = crop_bgr[g < 70]
+    bg = np.median(dark.reshape(-1, 3), axis=0).astype(int) if len(dark) else np.zeros(3, int)
+    shape = np.abs(crop_bgr.astype(int) - bg).max(axis=2) > SHAPE_TOL; shape[crop_bands(crop_bgr)] = False
+    tc = composite(t, bg); tm = ((t[..., 3] > 0) & (np.abs(tc.astype(int) - bg).max(axis=2) > SHAPE_TOL)).astype(np.uint8)
+    k = np.ones((3, 3), np.uint8); nb = VARIANT_NEIGHBOURS
+    tm_any, tm_all = cv2.dilate(tm, nb) > 0, cv2.erode(tm, nb) > 0
+    t_hi, t_lo = cv2.dilate(tc, nb).astype(int), cv2.erode(tc, nb).astype(int)
+    y0, x0, _ = _locate(crop_bgr, t, bg); s = t.shape[0]; best = None
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            y, x = y0 + dy, x0 + dx
+            if y < 0 or x < 0 or y + s > shape.shape[0] or x + s > shape.shape[1]: continue
+            w = shape[y:y + s, x:x + s]; p = crop_bgr[y:y + s, x:x + s].astype(int)
+            sh = int(cv2.morphologyEx(((w & ~tm_any) | (tm_all & ~w)).astype(np.uint8), cv2.MORPH_OPEN, k).sum())
+            off = np.maximum(p - t_hi, t_lo - p).max(axis=2)
+            col = int(cv2.morphologyEx(((off > VARIANT_COLOUR) & tm_all & w).astype(np.uint8), cv2.MORPH_OPEN, k).sum())
+            if best is None or sh + col < sum(best): best = (sh, col)
+    return best or (0, 0)
+
+
+_SIBLINGS = {}       # (a, b) -> (icon a, icon b, bool); entries hold the icons, see _COMPOSITES
+
+
 def shape_siblings(icons, a, b):
-    """two templates that differ only by a small solid part (a scope), the case shape_decision is for"""
-    reg = shape_regions(icons, a, b)
-    return reg is not None and (reg[1].sum() + reg[2].sum()) <= SHAPE_SIBLING * reg[0].sum()
+    """two templates that differ only by a scope-sized solid part (SIBLING_CROSS, SIBLING_PART), the case shape_decision
+    is for even when the colour score already leads by up to SHAPE_CLOSE"""
+    ia, ib = icons[a], icons[b]
+    hit = _SIBLINGS.get((a, b))
+    if hit is not None and hit[0] is ia and hit[1] is ib: return hit[2]
+    reg = shape_regions(icons, a, b); out = False
+    if reg is not None and max(reg[1].sum(), reg[2].sum()) <= SIBLING_PART:
+        bg = np.full(3, 2)
+        pa = cv2.copyMakeBorder(composite(ia, bg), 8, 8, 8, 8, cv2.BORDER_CONSTANT, value=(2, 2, 2))
+        pb = cv2.copyMakeBorder(composite(ib, bg), 8, 8, 8, 8, cv2.BORDER_CONSTANT, value=(2, 2, 2))
+        cross = min(float(cv2.matchTemplate(pa, composite(ib, bg), cv2.TM_CCOEFF_NORMED).max()),
+                    float(cv2.matchTemplate(pb, composite(ia, bg), cv2.TM_CCOEFF_NORMED).max()))
+        out = cross >= SIBLING_CROSS
+    if len(_SIBLINGS) > 1024: _SIBLINGS.clear()
+    _SIBLINGS[(a, b)] = (ia, ib, out)
+    return out
 
 
 def pair_decision(crop_bgr, icons, a, b, tol=2):
@@ -216,18 +277,25 @@ def match(crop_bgr, icons, topk=3, close=0.05, tol=2):
     (a colour/scope variant of the same weapon), or within SHAPE_CLOSE and a shape sibling (scope variant), stage 2
     decides between the top two with pair_decision.
     Returns [(score, name, stage, confidence), ...]: score is always the natural-background score of the
-    candidate, confidence is 1.0 for a clear stage-1 win and the pair confidence otherwise."""
+    candidate, confidence is 1.0 for a clear stage-1 win and the pair confidence otherwise. When the winner is one of our
+    captured templates (icons.captured) and the crop has a solid part it lacks (extra_parts), the winner's stage is
+    'variant': most likely a weapon without a template yet, to be treated as unknown."""
     g = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
     dark = crop_bgr[g < 70]
     bg = np.median(dark.reshape(-1, 3), axis=0) if len(dark) else np.zeros(3)
     natural = {name: score_icon(crop_bgr, im, bg) for name, im in icons.items()}
     ranked = sorted(natural.items(), key=lambda kv: -kv[1])
-    (n1, s1), (n2, s2) = ranked[0], ranked[1]
-    if icons[n1].shape[2] == 4 and icons[n2].shape[2] == 4 and (s1 - s2 <= close or (s1 - s2 <= SHAPE_CLOSE and shape_siblings(icons, n1, n2))):
+    (n1, s1), (n2, s2) = ranked[0], ranked[1] if len(ranked) > 1 else (None, -1.0)
+    if n2 is not None and icons[n1].shape[2] == 4 and icons[n2].shape[2] == 4 and (s1 - s2 <= close or (s1 - s2 <= SHAPE_CLOSE and shape_siblings(icons, n1, n2))):
         winner, conf = pair_decision(crop_bgr, icons, n1, n2, tol=tol)
         loser = n2 if winner == n1 else n1
-        return [(round(natural[winner], 3), winner, 'pair', round(conf, 3)), (round(natural[loser], 3), loser, 'pair', round(conf, 3))] +                [(round(s, 3), n, 'natural', None) for n, s in ranked[2:topk]]
-    return [(round(s, 3), n, 'natural', 1.0 if i == 0 else None) for i, (n, s) in enumerate(ranked[:topk])]
+        out = [(round(natural[winner], 3), winner, 'pair', round(conf, 3)), (round(natural[loser], 3), loser, 'pair', round(conf, 3))] +               [(round(s, 3), n, 'natural', None) for n, s in ranked[2:topk]]
+    else:
+        out = [(round(s, 3), n, 'natural', 1.0 if i == 0 else None) for i, (n, s) in enumerate(ranked[:topk])]
+    w = out[0][1]
+    if w in getattr(icons, 'captured', ()) and max(extra_parts(crop_bgr, icons[w])) >= VARIANT_PART:
+        out[0] = (out[0][0], w, 'variant', out[0][3])
+    return out
 
 
 RESULT_ROWS = {'win1': 390, 'win2': 455, 'win3': 520, 'win4': 585, 'lose1': 745, 'lose2': 810, 'lose3': 875, 'lose4': 940}

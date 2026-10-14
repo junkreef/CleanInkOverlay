@@ -15,9 +15,11 @@ The template is the per-pixel median of its samples, so a one-off disturbance (a
 once a weapon has a few; the wiki icon's mask, while it is around, trims anything off the weapon's outline. (The badge in
 the bottom-right corner of many icons, e.g. "89" or a brand logo, belongs to the weapon variant and stays.)
 
-Reserved for labelling unknown icons later: data/icon_samples/_unknown/ (never a weapon name).
+Icons that match no template are kept as unknown groups, data/icon_samples/_unknown/<id>/ (library name '_unknown/<id>'):
+one group per look, so a weapon seen again joins its group and is named once on the web page (Store.label_weapon_icon),
+which moves the samples under the weapon's name. Group templates are rebuilt from the samples on load and never shipped.
 """
-import os, re
+import hashlib, os, re
 import cv2, numpy as np
 
 ROOT = os.path.join(os.path.dirname(__file__), '..')
@@ -26,6 +28,9 @@ SAMPLES_DIR = os.path.join(ROOT, 'data', 'icon_samples')
 UNKNOWN = '_unknown'
 ICON_PX = 56
 MAX_SAMPLES = 8
+MIN_TO_REPLACE = MAX_SAMPLES  # a shipped template (one without local samples: they are not distributed) is only rebuilt
+                         # from local samples once they are complete (spread over >= 4 rows by MAX_PER_ROW): rebuilt from 3,
+                         # パラシェルター / スプラローラー / .96ガロン爪 templates no longer matched their other rows (2026-10-15)
 MAX_PER_ROW = 2          # samples per result-row position: each of the 8 rows renders the icon a sub-pixel apart, so a
                          # template from one row only matches that row best (リッター4K from lose4 rows read win3 rows as 4Kスコープ)
 HARVEST_MIN_SCORE = 0.94
@@ -123,9 +128,19 @@ def without_shadow(t):
     return t
 
 
+def group_name(gid):
+    return f'{UNKNOWN}/{gid}'
+
+
+def group_id(name):
+    """'_unknown/u1a2b3c4d' -> 'u1a2b3c4d'; None for a weapon name"""
+    return name[len(UNKNOWN) + 1:] if name and name.startswith(UNKNOWN + '/') else None
+
+
 class IconLibrary:
     """templates + their samples. add_sample() collects in memory and rebuilds the template; save() writes both
-    (Store owns the instance and calls save, like the signature library)."""
+    (Store owns the instance and calls save, like the signature library). `version` counts template changes, so a holder
+    of loaded icon sets (the recorder) knows when to reload them."""
 
     def __init__(self, captured_dir=CAPTURED_DIR, samples_dir=SAMPLES_DIR):
         self.captured_dir, self.samples_dir = captured_dir, samples_dir
@@ -138,6 +153,12 @@ class IconLibrary:
         self.pending = {}           # name -> [(file stem, crop)] not written yet
         self.dirty = set()          # names whose template changed (or was dropped) since the last save
         self.dropped = set()        # sample files to delete on save
+        self.version = 0
+        self.shipped = {n for n in self.templates if not self.sample_stems(n)}   # templates made elsewhere (see MIN_TO_REPLACE)
+        gdir = os.path.join(samples_dir, UNKNOWN)
+        for gid in sorted(os.listdir(gdir)) if os.path.isdir(gdir) else []:
+            t = build_template(self.samples(group_name(gid)))
+            if t is not None: self.templates[group_name(gid)] = t
 
     def sample_stems(self, name):
         d = os.path.join(self.samples_dir, name)
@@ -155,6 +176,26 @@ class IconLibrary:
             if s == stem: return c
         return imread_u(os.path.join(self.samples_dir, name, stem + '.png'), cv2.IMREAD_COLOR)
 
+    def groups(self):
+        """ids of the unknown groups"""
+        return sorted(group_id(n) for n in self.templates if group_id(n))
+
+    def new_group(self, crop, stem):
+        """start an unknown group with this crop; returns its id"""
+        gid = 'u' + hashlib.md5(crop.tobytes()).hexdigest()[:8]
+        self.add_sample(group_name(gid), crop, stem)
+        return gid
+
+    def label_group(self, gid, name, wiki=None):
+        """an unknown group turned out to be `name`: its samples move there (as many as `name` still wants, the rest are
+        dropped) and the group goes away. wiki = the weapon's wiki icon, if any. Returns the number of samples moved."""
+        g = group_name(gid)
+        if g not in self.templates: raise KeyError(gid)
+        moved = 0
+        for stem in list(self.sample_stems(g)):
+            moved += self.drop_sample(g, stem, to=name, wiki_to=wiki)
+        return moved
+
     def wants(self, name, stem=None):
         """True while `name` collects samples; with the sample's stem, also False when its row position is full"""
         if not name or name == UNKNOWN: return False
@@ -171,10 +212,13 @@ class IconLibrary:
         return self.rebuild(name, wiki)
 
     def rebuild(self, name, wiki=None):
+        if name in self.shipped:
+            if len(self.sample_stems(name)) < MIN_TO_REPLACE: return False   # keep collecting, keep the shipped template
+            self.shipped.discard(name)
         teacher = self.templates.get(name)
         t = build_template(self.samples(name), teacher if teacher is not None else wiki, trim=wiki)
         if t is None: return False
-        self.templates[name] = t; self.dirty.add(name)
+        self.templates[name] = t; self.dirty.add(name); self.version += 1
         return True
 
     def drop_sample(self, name, stem, to=None, wiki=None, wiki_to=None):
@@ -190,7 +234,7 @@ class IconLibrary:
             if p in self.dropped or not os.path.exists(p): raise KeyError(f'{name}/{stem}')
             crop = imread_u(p, cv2.IMREAD_COLOR); self.dropped.add(p)
         if self.sample_stems(name): self.rebuild(name, wiki)
-        else: self.templates.pop(name, None); self.dirty.add(name)
+        else: self.templates.pop(name, None); self.dirty.add(name); self.version += 1
         return bool(to) and self.add_sample(to, crop, stem, wiki_to)
 
     def save(self):
@@ -201,6 +245,10 @@ class IconLibrary:
             for stem, crop in items: imwrite_u(os.path.join(d, stem + '.png'), crop)
         if self.dirty: os.makedirs(self.captured_dir, exist_ok=True)
         for name in self.dirty:
+            if group_id(name):                                    # unknown groups: samples only, their folder goes when empty
+                d = os.path.join(self.samples_dir, name)
+                if name not in self.templates and os.path.isdir(d) and not os.listdir(d): os.rmdir(d)
+                continue
             p = os.path.join(self.captured_dir, name + '.png')
             if name in self.templates: imwrite_u(p, self.templates[name])
             elif os.path.exists(p): os.remove(p)

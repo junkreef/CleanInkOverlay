@@ -20,8 +20,8 @@ import cv2, numpy as np
 sys.path.insert(0, os.path.dirname(__file__))
 from result_parser import parse, Glyphs, RESULT_ROWS, NAME, WEAPON, crop as rcrop, white_mask
 from signatures import signature, Library
-from weapon_match import load_main_weapons, load_wiki_icons, icon_source, imread_u
-from weapon_icons import harvestable, lossless
+from weapon_match import load_main_weapons, load_wiki_icons, icon_source, imread_u, score_icon, extra_parts, UNKNOWN_BELOW, VARIANT_PART
+from weapon_icons import harvestable, lossless, group_name, panel_bg
 from scan_screens import looks_like_rule
 from live_result_watch import looks_like_result
 from rule_screen import read_cards
@@ -258,28 +258,53 @@ class Recorder:
                 else: kf.append(dict(t=c['t'], t_last=t, sig=c['sig']))
 
     def load_icons(self):
-        d = self.store.weapon_icons().captured_dir
+        # the unknown groups stay out of these sets: in the matcher a group made from one bad crop of a known weapon would
+        # compete with that weapon's template and take its later rows; harvest_icons tries the groups after the matcher
+        lib = self.store.weapon_icons(); d = lib.captured_dir
         self.icons = load_main_weapons(captured_dir=d)                # 56 px composites for the result screen
         self.icons_big = load_main_weapons(size=256, captured_dir=d)  # RGBA for HUD icon linking
+        self.icons_version = lib.version
+
+    def fit_group(self, c):
+        """the unknown group a crop looks like (score >= UNKNOWN_BELOW and no part either lacks), else None"""
+        lib = self.store.weapon_icons(); bg = panel_bg(c); best = None
+        for gid in lib.groups():
+            t = lib.templates[group_name(gid)]; sc = score_icon(c, t, bg)
+            if sc >= UNKNOWN_BELOW and max(extra_parts(c, t)) < VARIANT_PART and (best is None or sc > best[0]): best = (sc, gid)
+        return best and best[1]
 
     def harvest_icons(self, f, res, ts):
         """keep confidently matched result-row icons as samples of our own weapon templates (weapon_icons.py), so the
-        wiki icons get replaced as weapons show up; reload the icon sets when a template changed"""
-        lib = self.store.weapon_icons(); changed = []
+        wiki icons get replaced as weapons show up; an icon matching no weapon goes to the unknown group it fits, or a new
+        one (row['weapon_unknown']), to be named on the web page. Live only: a recording's H.264 crops can pass `lossless`
+        but are noisy enough to start groups of known weapons. Reloads the icon sets when a template changed."""
+        if self.source != 'live': return
+        lib = self.store.weapon_icons(); added = []; v = lib.version
         for row, y in zip(res['rows'], RESULT_ROWS.values()):
-            if not (harvestable(row) and lib.wants(row['weapon'], f'{ts}_{row["row"]}')): continue
-            c = rcrop(f, WEAPON, y)
-            if lossless(c) and lib.add_sample(row['weapon'], c, f'{ts}_{row["row"]}', wiki=self.wiki_icons.get(row['weapon'])):
-                changed.append(row['weapon'])
-        if changed:
-            self.store.save_libraries(); self.load_icons()
-            self.log(f'    weapon icon samples added: {", ".join(changed)}')
+            stem = f'{ts}_{row["row"]}'
+            if row['weapon']:
+                if not (harvestable(row) and lib.wants(row['weapon'], stem)): continue
+                c = rcrop(f, WEAPON, y)
+                if not lossless(c): continue
+                lib.add_sample(row['weapon'], c, stem, wiki=self.wiki_icons.get(row['weapon'])); added.append(row['weapon'])
+            elif (row['weapon_score'] or 0) >= 0.6:                   # an icon, but none we know (score 0.6: not an empty row)
+                c = rcrop(f, WEAPON, y)
+                if not lossless(c): continue
+                gid = self.fit_group(c)
+                if gid: lib.add_sample(group_name(gid), c, stem)
+                else: gid = lib.new_group(c, stem)
+                row['weapon_unknown'] = gid; added.append(f'? {gid}')
+        if added:
+            self.store.save_libraries()
+            if lib.version != v: self.load_icons()
+            self.log(f'    weapon icon samples added: {", ".join(added)}')
 
     # ------------------------------------------------------------ end of match
     def finish(self, f, t):
         m = self.m; self.state = 'IDLE'
         res = None; result_image = None; ts = m.get('ts') or self.stamp(t)
         if f is not None:
+            if self.store.weapon_icons().version != self.icons_version: self.load_icons()   # e.g. an icon named on the web
             res = parse(f, self.icons, self.glyphs, self.lib); self.store.save_libraries()
             if not result_sane(res):
                 self.log(f'[{t:8.1f}] result screen did not parse sanely (self row / weapons / points) - discarded')
@@ -414,9 +439,10 @@ def timeline_rows(S, t0):
 
 
 def result_sane(res):
-    """a real result screen has a self row, mostly recognised weapons and numeric points"""
+    """a real result screen has a self row, weapon icons (mostly matching something, at least 3 known: a copy without many
+    templates yet sees unknown weapons) and numeric points"""
     if not res or not any(r['self'] for r in res['rows']): return False
-    if sum(1 for r in res['rows'] if r['weapon']) < 6: return False
+    if sum(1 for r in res['rows'] if (r['weapon_score'] or 0) >= 0.6) < 6 or sum(1 for r in res['rows'] if r['weapon']) < 3: return False
     return sum(1 for r in res['rows'] if to_int(r['points']) is not None) >= 6
 
 

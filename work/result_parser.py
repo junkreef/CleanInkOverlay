@@ -131,8 +131,12 @@ def parse(f, icons, glyphs, lib=None):
                 if x0 <= ax <= x1: groups[gi] += ch
         arrow = crop(f, ARROW, y); yellow = ((arrow[..., 2] > 180) & (arrow[..., 1] > 180) & (arrow[..., 0] < 100)).mean()
         wp = match_weapon(crop(f, WEAPON, y), icons)
+        score, name, stage = wp[0][0], wp[0][1], wp[0][2]
+        known = score >= UNKNOWN_BELOW and stage != 'variant'             # 'variant': a weapon without a template yet
         res['rows'].append(dict(row=label, team='win' if label.startswith('win') else 'lose', self=bool(yellow > 0.05),
-                                weapon=wp[0][1] if wp[0][0] >= UNKNOWN_BELOW else None, weapon_score=wp[0][0], weapon_conf=wp[0][3], weapon_alt=wp[1][1] if len(wp) > 1 else None, weapon_candidates=[w[1] for w in wp[:3]],
+                                weapon=name if known else None, weapon_score=score, weapon_conf=wp[0][3], weapon_stage=stage,
+                                weapon_unknown=None,                       # the unknown icon group, set by the recorder (harvest_icons)
+                                weapon_alt=wp[1][1] if len(wp) > 1 else None, weapon_candidates=[w[1] for w in wp[:3]],
                                 points=pts.rstrip('p'), kills=groups[0].lstrip('x'), deaths=groups[1].lstrip('x'), specials=groups[2].lstrip('x'),
                                 min_glyph_score=min([sc for sc, ch in zip(pts_sc + st_sc, pts + st) if ch not in 'xp'] or [None])))
     for side, r in (('pct_left', PCT_L), ('pct_right', PCT_R)):

@@ -87,7 +87,7 @@ export default function App() {
           {TABS.map(([k, label]) => (
             <a key={k} href={`#/${k}`} className={r.tab === k ? 'active' : ''}>
               {label}
-              {k === 'signatures' && summary?.unlabelled_signatures ? <span className="badge">{summary.unlabelled_signatures}</span> : null}
+              {k === 'signatures' && (summary?.unlabelled_signatures || summary?.unknown_weapon_icons) ? <span className="badge">{(summary.unlabelled_signatures || 0) + (summary.unknown_weapon_icons || 0)}</span> : null}
             </a>
           ))}
         </nav>

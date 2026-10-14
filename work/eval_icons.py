@@ -2,7 +2,8 @@
 
     uv run python work/eval_icons.py [GLOB]     # default GLOB: samples/matches/*_result.png
 
-For each result row: the answer of the old icon set (wiki + assets/real_icons) vs the answer of the captured templates,
+For each result row: the answer of the old icon set (wiki + assets/real_icons) vs the answer of the captured templates
+(a 'variant' answer counts as unknown, as in result_parser),
 where the templates built from this very screen are rebuilt without it (a weapon whose only sample is this row has no
 template then, as on a screen of a weapon never seen before). Prints the agreement and the score margins.
 """
@@ -10,7 +11,7 @@ import collections, glob, os, sys
 import cv2, numpy as np
 sys.path.insert(0, os.path.dirname(__file__))
 from weapon_icons import IconLibrary, build_template, harvestable, lossless, imread_u
-from weapon_match import load_wiki_icons, match, RESULT_ROWS, ROOT, UNKNOWN_BELOW
+from weapon_match import load_wiki_icons, match, IconSet, RESULT_ROWS, ROOT, UNKNOWN_BELOW
 from result_parser import WEAPON, crop as rcrop
 from harvest_icons import REAL_DIR
 
@@ -29,7 +30,7 @@ def main():
         f = imread_u(p, cv2.IMREAD_COLOR)
         if f is None: continue
         stem = os.path.basename(p)[:-len('_result.png')]
-        icons = dict(full)
+        icons = IconSet(full, captured=full)            # captured templates: the matcher checks them for parts they lack
         for name in set(by_stem.get(stem, [])):         # leave this screen's samples out
             d = os.path.join(lib.samples_dir, name)
             keep = [imread_u(os.path.join(d, x), cv2.IMREAD_COLOR) for x in sorted(os.listdir(d)) if not x.startswith(stem + '_')]
@@ -41,7 +42,7 @@ def main():
             if not lossless(c): tally['skipped (H.264)'] += 1; continue
             o = match(c, old)[0]; n = match(c, icons)
             truth = o[1] if o[0] >= UNKNOWN_BELOW else None
-            got = n[0][1] if n[0][0] >= UNKNOWN_BELOW else None
+            got = n[0][1] if n[0][0] >= UNKNOWN_BELOW and n[0][2] != 'variant' else None   # as result_parser reads it
             conf = harvestable(dict(weapon=o[1], weapon_score=o[0], weapon_conf=o[3]))
             kind = 'confident' if conf else 'unsure'
             if got == truth: tally[f'{kind}: same'] += 1

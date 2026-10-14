@@ -21,10 +21,10 @@ from sqlalchemy import delete, func, select, update
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 WORK = os.path.join(ROOT, 'work')
 if WORK not in sys.path: sys.path.insert(0, WORK)
-from app.db import make_engine, make_session_factory, upgrade, require_current, Match, MatchPlayer, Event, Medal, Timeline
+from app.db import make_engine, make_session_factory, upgrade, require_current, Match, MatchPlayer, Event, Medal, Timeline, Weapon
 from app.db import queries
 from signatures import Library
-from weapon_icons import IconLibrary
+from weapon_icons import IconLibrary, group_name
 
 
 class Events:
@@ -72,7 +72,7 @@ class Store:
 
     # ------------------------------------------------------------------ libraries (owned here, handed out to the analysers)
     def signatures(self):
-        if self._sig is None: self._sig = Library()
+        if self._sig is None: self._sig = Library(os.path.join(self.root, 'assets', 'signatures.json'))
         return self._sig
 
     def weapon_icons(self):
@@ -114,7 +114,7 @@ class Store:
     def file_path(self, relpath):
         """absolute path of a data file the web may serve; None if outside the allowed folders"""
         p = os.path.abspath(os.path.join(self.root, relpath))
-        allowed = [os.path.join(self.root, 'samples'), os.path.join(self.root, 'work', 'frames')]
+        allowed = [os.path.join(self.root, 'samples'), os.path.join(self.root, 'work', 'frames'), self.weapon_icons().samples_dir]
         if not any(p.startswith(os.path.abspath(a) + os.sep) for a in allowed): return None
         return p if os.path.exists(p) else None
 
@@ -199,7 +199,7 @@ class Store:
         with self.Session() as s:
             n, wins = s.execute(queries.match_counts()).one()
         return {'matches': n, 'wins': wins, 'last_id': self.last_match_id(),
-                'unlabelled_signatures': len(self.unlabelled_signatures())}
+                'unlabelled_signatures': len(self.unlabelled_signatures()), 'unknown_weapon_icons': len(self.weapon_icons().groups())}
 
     # ------------------------------------------------------------------ signature labelling (stages / medals)
     def unlabelled_signatures(self, kind=None):
@@ -227,6 +227,48 @@ class Store:
             if kind is None: return []
             return queries.rows(s, select(Match.id.label('match_id'), Match.rule_image, Match.result_image)
                                    .where(Match.raw_json.like(f'%"{kind}_id": "{sid}"%')).order_by(Match.id.desc()).limit(limit))
+
+    # ------------------------------------------------------------------ unknown weapon icons (named like the signatures)
+    def unknown_weapon_icons(self, limit=3):
+        """the unknown icon groups: id, their sample crops (repo-relative paths) and where they were seen (match id, row,
+        result screen), newest first"""
+        lib = self.weapon_icons(); out = []
+        with self.Session() as s:
+            for gid in lib.groups():
+                d = os.path.join(lib.samples_dir, group_name(gid))
+                samples = [rel(os.path.join(d, st + '.png')) for st in lib.sample_stems(group_name(gid)) if os.path.exists(os.path.join(d, st + '.png'))]
+                seen = []
+                for mid, img, raw in s.execute(select(Match.id, Match.result_image, Match.raw_json).where(Match.raw_json.like(f'%"weapon_unknown": "{gid}"%'))
+                                               .order_by(Match.id.desc()).limit(limit)):
+                    rows = [r['row'] for r in json.loads(raw)['rows'] if r.get('weapon_unknown') == gid]
+                    seen.append({'match_id': mid, 'result_image': img, 'rows': rows})
+                out.append({'id': gid, 'samples': samples, 'seen': seen})
+        return out
+
+    def weapon_names(self):
+        """main weapon names to offer when naming an icon: the weapon master (DB) and the names we have templates for"""
+        with self.Session() as s:
+            names = set(s.scalars(select(Weapon.name).where(Weapon.class_.not_in(('サブ', 'スペシャル', 'その他')) | Weapon.class_.is_(None))))
+        names |= {n for n in self.weapon_icons().templates if not n.startswith('_')}
+        return sorted(names - {'ブキ無し'})
+
+    def label_weapon_icon(self, gid, name):
+        """an unknown icon group is `name`: its samples become (part of) the weapon's template, and the matches that saw it
+        get the weapon in match_players (the row's team + position) and in raw_json"""
+        if not name or name.startswith('_'): raise ValueError(name)
+        lib = self.weapon_icons()
+        with self._lock, self.Session.begin() as s:
+            lib.label_group(gid, name); lib.save()
+            for m in s.scalars(select(Match).where(Match.raw_json.like(f'%"weapon_unknown": "{gid}"%'))):
+                raw = json.loads(m.raw_json)
+                for ri, r in enumerate(raw['rows']):
+                    if r.get('weapon_unknown') != gid: continue
+                    r['weapon'] = name
+                    if r.get('hteam'):
+                        s.execute(update(MatchPlayer).where(MatchPlayer.match_id == m.id, MatchPlayer.team == r['hteam'],
+                                                            MatchPlayer.result_row == ri % 4, MatchPlayer.weapon.is_(None)).values(weapon=name))
+                m.raw_json = json.dumps(raw, ensure_ascii=False)
+        self.events.publish('weapon_icons_changed', {'id': gid, 'name': name})
 
     def prune_signatures(self):
         """drop unlabelled signatures that no saved screen shows any more (dry runs, deleted matches, missing PNGs):

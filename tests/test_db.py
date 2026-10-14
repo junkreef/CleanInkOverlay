@@ -78,7 +78,8 @@ def test_store_roundtrip_and_stats(tmp_path):
     lst = s.list_matches()
     assert [x['id'] for x in lst] == [2, 1] and lst[0]['weapon'] == 'わかばシューター' and lst[0]['medals'] == 2 and lst[0]['events'] == 4
     assert s.list_matches(limit=1, offset=1)[0]['id'] == 1
-    assert s.summary() == {'matches': 2, 'wins': 1, 'last_id': 2, 'unlabelled_signatures': s.summary()['unlabelled_signatures']}
+    assert s.summary() == {'matches': 2, 'wins': 1, 'last_id': 2, 'unlabelled_signatures': s.summary()['unlabelled_signatures'],
+                           'unknown_weapon_icons': s.summary()['unknown_weapon_icons']}
 
     st = s.stats()
     assert st['weapon_stats'] == [{'weapon': 'わかばシューター', 'games': 2, 'wins': 1, 'win_pct': 50.0, 'avg_ka': 1.0, 'avg_d': 7.0, 'avg_sp': 2.0, 'avg_points': 1001.0}]
