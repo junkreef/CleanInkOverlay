@@ -10,7 +10,7 @@ icons (assets/weapon_icons, not redistributable) only for weapons without one. C
 (default both) picks the sets, e.g. `captured` runs as a copy without the wiki icons would.
 """
 import cv2, numpy as np, os, json
-from weapon_icons import imread_u, without_shadow, crop_bands, ICON_PX, CAPTURED_DIR
+from weapon_icons import imread_u, without_shadow, crop_bands, ICON_PX, CAPTURED_DIR, UNKNOWN
 
 ROOT = os.path.join(os.path.dirname(__file__), '..')
 ICON_DIR = os.path.join(ROOT, 'assets', 'weapon_icons')
@@ -204,6 +204,19 @@ def extra_parts(crop_bgr, t):
 
 
 _SIBLINGS = {}       # (a, b) -> (icon a, icon b, bool); entries hold the icons, see _COMPOSITES
+
+
+def fit_group(crop_bgr, lib):
+    """the unknown group of IconLibrary `lib` this crop looks like (score >= UNKNOWN_BELOW and no part either lacks), else
+    None. The groups stay out of the matcher's icon sets (a group made from one bad crop of a known weapon would take that
+    weapon's later rows), so they are tried here, after it."""
+    g = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY); dark = crop_bgr[g < 70]
+    bg = np.median(dark.reshape(-1, 3), axis=0) if len(dark) else np.zeros(3)
+    best = None
+    for gid in lib.groups():
+        t = lib.templates[f'{UNKNOWN}/{gid}']; sc = score_icon(crop_bgr, t, bg)
+        if sc >= UNKNOWN_BELOW and max(extra_parts(crop_bgr, t)) < VARIANT_PART and (best is None or sc > best[0]): best = (sc, gid)
+    return best and best[1]
 
 
 def shape_siblings(icons, a, b):

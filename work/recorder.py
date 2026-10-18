@@ -20,8 +20,8 @@ import cv2, numpy as np
 sys.path.insert(0, os.path.dirname(__file__))
 from result_parser import parse, Glyphs, RESULT_ROWS, NAME, WEAPON, crop as rcrop, white_mask
 from signatures import signature, Library
-from weapon_match import load_main_weapons, load_wiki_icons, icon_source, imread_u, score_icon, extra_parts, UNKNOWN_BELOW, VARIANT_PART
-from weapon_icons import harvestable, lossless, group_name, panel_bg
+from weapon_match import load_main_weapons, load_wiki_icons, icon_source, imread_u, fit_group
+from weapon_icons import harvestable, lossless, group_name, HARVEST_MIN_SCORE
 from scan_screens import looks_like_rule
 from live_result_watch import looks_like_result
 from rule_screen import read_cards
@@ -265,34 +265,32 @@ class Recorder:
         self.icons_big = load_main_weapons(size=256, captured_dir=d)  # RGBA for HUD icon linking
         self.icons_version = lib.version
 
-    def fit_group(self, c):
-        """the unknown group a crop looks like (score >= UNKNOWN_BELOW and no part either lacks), else None"""
-        lib = self.store.weapon_icons(); bg = panel_bg(c); best = None
-        for gid in lib.groups():
-            t = lib.templates[group_name(gid)]; sc = score_icon(c, t, bg)
-            if sc >= UNKNOWN_BELOW and max(extra_parts(c, t)) < VARIANT_PART and (best is None or sc > best[0]): best = (sc, gid)
-        return best and best[1]
-
     def harvest_icons(self, f, res, ts):
         """keep confidently matched result-row icons as samples of our own weapon templates (weapon_icons.py), so the
         wiki icons get replaced as weapons show up; an icon matching no weapon goes to the unknown group it fits, or a new
-        one (row['weapon_unknown']), to be named on the web page. Live only: a recording's H.264 crops can pass `lossless`
+        one (row['weapon_unknown']), to be named on the web page. So does an icon only a wiki icon names, with too little
+        confidence to be a sample (ホットブラスター艶 0.926, ソイチューバー 0.93): it waits in a group with the wiki's name as
+        the guess, else such a weapon would never get a template. Live only: a recording's H.264 crops can pass `lossless`
         but are noisy enough to start groups of known weapons. Reloads the icon sets when a template changed."""
         if self.source != 'live': return
         lib = self.store.weapon_icons(); added = []; v = lib.version
         for row, y in zip(res['rows'], RESULT_ROWS.values()):
             stem = f'{ts}_{row["row"]}'
-            if row['weapon']:
+            guess = row['weapon'] if (row['weapon'] and row['weapon'] not in self.icons.captured
+                                      and (row['weapon_score'] or 0) < HARVEST_MIN_SCORE) else None   # a wiki name to confirm
+            if row['weapon'] and not guess:
                 if not (harvestable(row) and lib.wants(row['weapon'], stem)): continue
                 c = rcrop(f, WEAPON, y)
                 if not lossless(c): continue
                 lib.add_sample(row['weapon'], c, stem, wiki=self.wiki_icons.get(row['weapon'])); added.append(row['weapon'])
-            elif (row['weapon_score'] or 0) >= 0.6:                   # an icon, but none we know (score 0.6: not an empty row)
+            elif guess or (row['weapon_score'] or 0) >= 0.6:          # an icon, but none we know (score 0.6: not an empty row)
                 c = rcrop(f, WEAPON, y)
                 if not lossless(c): continue
-                gid = self.fit_group(c)
-                if gid: lib.add_sample(group_name(gid), c, stem)
-                else: gid = lib.new_group(c, stem)
+                gid = fit_group(c, lib)
+                if gid:
+                    lib.add_sample(group_name(gid), c, stem)
+                    if guess and not lib.guess(gid): lib.guesses[gid] = guess; lib.dirty.add(group_name(gid))
+                else: gid = lib.new_group(c, stem, guess)
                 row['weapon_unknown'] = gid; added.append(f'? {gid}')
         if added:
             self.store.save_libraries()

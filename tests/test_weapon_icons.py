@@ -72,3 +72,24 @@ def test_a_part_the_captured_template_lacks_makes_a_variant(tmp_path):
     assert match(row_crop(extra=True), icons)[0][1:3] == ('テストチャージャー', 'variant')            # a scope it has not got
     assert match(row_crop(colour=(40, 120, 240)), icons)[0][1:3] == ('テストチャージャー', 'variant')  # other colours
     assert match(row_crop(extra=True), IconSet(icons))[0][2] == 'natural'                         # wiki icons are not checked
+
+
+def test_a_wiki_guess_is_kept_with_its_group_and_naming_overrides_it(tmp_path):
+    """an icon the wiki icons name with too little confidence waits in a group with the wiki's name as its guess; the
+    user's name wins, also over the wiki's name already in match_players"""
+    lib = IconLibrary(str(tmp_path / 'captured'), str(tmp_path / 'samples'))
+    gid = lib.new_group(row_crop(), '2026-10-18_20-00-00_win4', guess='テストブラスター艶'); lib.save()
+    lib = IconLibrary(str(tmp_path / 'captured'), str(tmp_path / 'samples'))
+    assert lib.guess(gid) == 'テストブラスター艶'
+    s = Store(db_path=str(tmp_path / 'guess.db')); s._icons = lib
+    match, players, *rest = sample_match()
+    rows = [dict(row=r, hteam='ally' if r.startswith('win') else 'enemy', weapon='わかばシューター', weapon_unknown=None)
+            for r in ('win1', 'win2', 'win3', 'win4', 'lose1', 'lose2', 'lose3', 'lose4')]
+    rows[3].update(weapon='テストブラスター艶', weapon_unknown=gid)                     # win4 = ally, 4th row
+    players = [dict(p, result_row=p['slot'] % 4, weapon='テストブラスター艶' if p['slot'] == 3 else p['weapon']) for p in players]
+    mid = s.insert_match(dict(match, raw_json=json.dumps({'rows': rows}, ensure_ascii=False)), players, *rest)
+    assert s.unknown_weapon_icons()[0]['guess'] == 'テストブラスター艶'
+    s.label_weapon_icon(gid, 'テストブラスター')
+    assert s.get_match(mid)['players'][3]['weapon'] == 'テストブラスター'
+    assert not (tmp_path / 'samples' / '_unknown' / gid).exists() and lib.guess(gid) is None
+    s.close()

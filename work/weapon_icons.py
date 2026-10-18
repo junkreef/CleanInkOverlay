@@ -18,6 +18,8 @@ the bottom-right corner of many icons, e.g. "89" or a brand logo, belongs to the
 Icons that match no template are kept as unknown groups, data/icon_samples/_unknown/<id>/ (library name '_unknown/<id>'):
 one group per look, so a weapon seen again joins its group and is named once on the web page (Store.label_weapon_icon),
 which moves the samples under the weapon's name. Group templates are rebuilt from the samples on load and never shipped.
+A group may carry a guess (GUESS_FILE): icons the wiki icons name with too little confidence to become samples on their
+own (UNKNOWN_BELOW <= score < HARVEST_MIN_SCORE) wait there for the user to confirm the wiki's name.
 """
 import hashlib, os, re
 import cv2, numpy as np
@@ -26,6 +28,7 @@ ROOT = os.path.join(os.path.dirname(__file__), '..')
 CAPTURED_DIR = os.path.join(ROOT, 'assets', 'weapon_icons_captured')
 SAMPLES_DIR = os.path.join(ROOT, 'data', 'icon_samples')
 UNKNOWN = '_unknown'
+GUESS_FILE = 'guess.txt'  # in a group folder: the weapon the wiki icons took it for
 ICON_PX = 56
 MAX_SAMPLES = 8
 MIN_TO_REPLACE = MAX_SAMPLES  # a shipped template (one without local samples: they are not distributed) is only rebuilt
@@ -155,10 +158,13 @@ class IconLibrary:
         self.dropped = set()        # sample files to delete on save
         self.version = 0
         self.shipped = {n for n in self.templates if not self.sample_stems(n)}   # templates made elsewhere (see MIN_TO_REPLACE)
+        self.guesses = {}           # group id -> the wiki's name for it, if any
         gdir = os.path.join(samples_dir, UNKNOWN)
         for gid in sorted(os.listdir(gdir)) if os.path.isdir(gdir) else []:
             t = build_template(self.samples(group_name(gid)))
             if t is not None: self.templates[group_name(gid)] = t
+            g = os.path.join(gdir, gid, GUESS_FILE)
+            if os.path.exists(g): self.guesses[gid] = open(g, encoding='utf-8').read().strip() or None
 
     def sample_stems(self, name):
         d = os.path.join(self.samples_dir, name)
@@ -180,11 +186,15 @@ class IconLibrary:
         """ids of the unknown groups"""
         return sorted(group_id(n) for n in self.templates if group_id(n))
 
-    def new_group(self, crop, stem):
-        """start an unknown group with this crop; returns its id"""
+    def new_group(self, crop, stem, guess=None):
+        """start an unknown group with this crop (guess: the wiki's name for it, to be confirmed); returns its id"""
         gid = 'u' + hashlib.md5(crop.tobytes()).hexdigest()[:8]
         self.add_sample(group_name(gid), crop, stem)
+        if guess: self.guesses[gid] = guess
         return gid
+
+    def guess(self, gid):
+        return self.guesses.get(gid)
 
     def label_group(self, gid, name, wiki=None):
         """an unknown group turned out to be `name`: its samples move there (as many as `name` still wants, the rest are
@@ -194,6 +204,7 @@ class IconLibrary:
         moved = 0
         for stem in list(self.sample_stems(g)):
             moved += self.drop_sample(g, stem, to=name, wiki_to=wiki)
+        self.guesses.pop(gid, None)
         return moved
 
     def wants(self, name, stem=None):
@@ -245,9 +256,13 @@ class IconLibrary:
             for stem, crop in items: imwrite_u(os.path.join(d, stem + '.png'), crop)
         if self.dirty: os.makedirs(self.captured_dir, exist_ok=True)
         for name in self.dirty:
-            if group_id(name):                                    # unknown groups: samples only, their folder goes when empty
-                d = os.path.join(self.samples_dir, name)
-                if name not in self.templates and os.path.isdir(d) and not os.listdir(d): os.rmdir(d)
+            if group_id(name):                                    # unknown groups: samples (+ guess) only, never shipped
+                d = os.path.join(self.samples_dir, name); g = os.path.join(d, GUESS_FILE); gid = group_id(name)
+                if name in self.templates:
+                    if self.guesses.get(gid): os.makedirs(d, exist_ok=True); open(g, 'w', encoding='utf-8').write(self.guesses[gid])
+                elif os.path.isdir(d):                            # named or emptied: the folder goes
+                    if os.path.exists(g): os.remove(g)
+                    if not os.listdir(d): os.rmdir(d)
                 continue
             p = os.path.join(self.captured_dir, name + '.png')
             if name in self.templates: imwrite_u(p, self.templates[name])

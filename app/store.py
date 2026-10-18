@@ -230,8 +230,8 @@ class Store:
 
     # ------------------------------------------------------------------ unknown weapon icons (named like the signatures)
     def unknown_weapon_icons(self, limit=3):
-        """the unknown icon groups: id, their sample crops (repo-relative paths) and where they were seen (match id, row,
-        result screen), newest first"""
+        """the unknown icon groups: id, the wiki's guess (None for an icon nothing matched), their sample crops (repo-relative
+        paths) and where they were seen (match id, row, result screen), newest first"""
         lib = self.weapon_icons(); out = []
         with self.Session() as s:
             for gid in lib.groups():
@@ -242,8 +242,20 @@ class Store:
                                                .order_by(Match.id.desc()).limit(limit)):
                     rows = [r['row'] for r in json.loads(raw)['rows'] if r.get('weapon_unknown') == gid]
                     seen.append({'match_id': mid, 'result_image': img, 'rows': rows})
-                out.append({'id': gid, 'samples': samples, 'seen': seen})
+                out.append({'id': gid, 'guess': lib.guess(gid), 'samples': samples, 'seen': seen})
         return out
+
+    def link_weapon_unknown(self, result_image, row, gid):
+        """mark a stored match's result row as showing unknown icon group `gid` (for groups made from screens already
+        stored, work/confirm_backfill.py); returns the match id or None"""
+        with self._lock, self.Session.begin() as s:
+            m = s.scalars(select(Match).where(Match.result_image == result_image)).first()
+            if m is None or not m.raw_json: return None
+            raw = json.loads(m.raw_json)
+            for r in raw['rows']:
+                if r['row'] == row: r['weapon_unknown'] = gid
+            m.raw_json = json.dumps(raw, ensure_ascii=False)
+            return m.id
 
     def weapon_names(self):
         """main weapon names to offer when naming an icon: the weapon master (DB) and the names we have templates for"""
@@ -254,7 +266,7 @@ class Store:
 
     def label_weapon_icon(self, gid, name):
         """an unknown icon group is `name`: its samples become (part of) the weapon's template, and the matches that saw it
-        get the weapon in match_players (the row's team + position) and in raw_json"""
+        get the weapon in match_players (the row's team + position) and in raw_json, also where the wiki's guess stood"""
         if not name or name.startswith('_'): raise ValueError(name)
         lib = self.weapon_icons()
         with self._lock, self.Session.begin() as s:
@@ -266,7 +278,7 @@ class Store:
                     r['weapon'] = name
                     if r.get('hteam'):
                         s.execute(update(MatchPlayer).where(MatchPlayer.match_id == m.id, MatchPlayer.team == r['hteam'],
-                                                            MatchPlayer.result_row == ri % 4, MatchPlayer.weapon.is_(None)).values(weapon=name))
+                                                            MatchPlayer.result_row == ri % 4).values(weapon=name))
                 m.raw_json = json.dumps(raw, ensure_ascii=False)
         self.events.publish('weapon_icons_changed', {'id': gid, 'name': name})
 
