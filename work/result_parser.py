@@ -28,6 +28,8 @@ BANNER = {'mode': dict(x=841, y=48, h=18, w=140, pad=(41, 47)),      # "レギ�
           'rule': dict(x=837, y=89, h=31, w=200, pad=None),          # "ナワバリバトル": its tag runs on into the stage name
           'stage': dict(x=1061, y=96, h=23, w=280, pad=(86, 92))}    # the tag ends 1190-1315 depending on the name
 BANNER_SCALE = 0.5               # signature = the canvas mask at half resolution
+BANNER_MIN_W = 40                # px: narrower white is no text (the shortest banner text, バイガイ亭, is 86 px wide; an 8 px
+                                 # speck once became an unlabelled "stage" s_da06710c that no screen showed, 2026-10-18)
 BANNER_THR = 0.85                # same text on another screen correlates >= 0.99, the closest different stage names 0.61
 
 
@@ -95,12 +97,14 @@ def banner_signature(f, kind):
     their glyphs differ; identified with signatures.Library like the medal names."""
     b = BANNER[kind]; x, y, h, w = b['x'], b['y'], b['h'], b['w']
     x1 = x + w if b['pad'] is None else min(x + w, tag_end(f, x, b['pad'], x + w + 40) - 3)
+    if x1 - x < BANNER_MIN_W: return None                     # no dark tag there (2026-09-12_23-20-07: the band came out -3 px)
     band = f[y - 1:y + h + 1, x:x1]
     m = ((band.min(axis=2) > 190) & ((band.max(axis=2).astype(int) - band.min(axis=2).astype(int)) < 40)).astype(np.uint8)
     n, lab, stats, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
     for i in range(1, n):
         if stats[i][4] < 12: m[lab == i] = 0
-    if m.sum() < 20: return None
+    cols = np.flatnonzero(m.any(axis=0))
+    if m.sum() < 20 or not len(cols) or cols[-1] - cols[0] + 1 < BANNER_MIN_W: return None
     canvas = np.zeros((h + 2, w), np.uint8); canvas[:, :m.shape[1]] = m * 255
     return cv2.resize(canvas, None, fx=BANNER_SCALE, fy=BANNER_SCALE, interpolation=cv2.INTER_AREA).astype(np.float32).ravel() / 255
 
