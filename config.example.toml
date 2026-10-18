@@ -1,0 +1,7 @@
+# CleanInkOverlay settings. Copy this file to config.toml (next to it) and change what you need;
+# a setting left out keeps the default shown here.
+
+[images]
+# Screen PNGs (samples/matches) and bubble / miss evidence JPGs older than this many days are deleted when the
+# backend starts. Screens still needed to name an unknown stage / medal are kept regardless.
+keep_days = 7

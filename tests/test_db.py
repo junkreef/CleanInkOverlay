@@ -117,3 +117,43 @@ def test_check_constraints_are_enforced(tmp_path):
         s.insert_match(match, players, [dict(t_ms=0, type='assist', slot=1)], medals, timeline)
     assert s.summary()['matches'] == 0
     s.close()
+
+
+def test_prune_images_drops_old_untracked_screens_and_clears_the_rows(tmp_path):
+    """old screens go (and the match row forgets them); recent ones, the screens of unlabelled signatures and git-tracked files stay"""
+    import subprocess, time
+    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
+    s = Store(root=str(tmp_path), db_path=str(tmp_path / 'p.db'))
+    old = time.time() - 30 * 86400
+    def screen(name, age=old):
+        p = tmp_path / 'samples' / 'matches' / name; p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(b'png')
+        os.utime(p, (age, age)); return f'samples/matches/{name}'
+    match, players, events, medals, timeline = sample_match()
+    mid = s.insert_match(dict(match, raw_json='{}', rule_image=screen('a_rule.png'), result_image=screen('a_result.png'), medal_image=screen('a_medals.png')),
+                         players, events, medals=[dict(name='ナワバリ王', rank='gold', position=0)], timeline=timeline)
+    s.insert_match(dict(match, medal_image=screen('b_medals.png')), players, events, medals, timeline)    # shows unlabelled m_abcd / s_test1
+    s.signatures().items.update({'m_abcd': {'kind': 'medal'}, 's_test1': {'kind': 'stage'}})
+    recent = screen('c_rule.png', age=time.time()); tracked = screen('d_rule.png')
+    subprocess.run(['git', 'add', tracked], cwd=tmp_path, check=True)
+    (tmp_path / 'samples' / 'matches' / 'a.json').write_text('{}'); os.utime(tmp_path / 'samples' / 'matches' / 'a.json', (old, old))
+    assert sorted(s.prune_images(keep_days=7, dry=True)) == ['samples/matches/a_medals.png', 'samples/matches/a_result.png', 'samples/matches/a_rule.png']
+    assert (tmp_path / 'samples' / 'matches' / 'a_rule.png').exists()                                      # dry: nothing removed
+    s.prune_images(keep_days=7)
+    assert sorted(os.listdir(tmp_path / 'samples' / 'matches')) == ['a.json', 'b_medals.png', 'c_rule.png', 'd_rule.png']
+    m = s.get_match(mid); assert (m['rule_image'], m['result_image'], m['medal_image']) == (None, None, None)
+    s.close()
+
+
+def test_labelling_a_banner_signature_fills_the_matches_stored_under_it(tmp_path):
+    """mode / rule / stage are read from the result banner by signature; a label given later fills the NULL column of
+    the matches that carry the id in raw_json, and leaves other matches alone"""
+    from signatures import Library
+    s = Store(db_path=str(tmp_path / 'lab.db'))
+    s._sig = Library(str(tmp_path / 'sig.json'))
+    s._sig.items['m_event'] = dict(kind='mode', label=None, sig=[0.0] * 4)
+    match = sample_match()[0]
+    ids = [s.insert_match(dict(match, mode=None, raw_json=json.dumps({'mode_id': mid})), *sample_match()[1:]) for mid in ('m_event', 'm_other')]
+    s.label_signature('m_event', 'イベントマッチ')
+    assert [s.get_match(i)['mode'] for i in ids] == ['イベントマッチ', None]
+    assert Library(str(tmp_path / 'sig.json')).items['m_event']['label'] == 'イベントマッチ'
+    s.close()

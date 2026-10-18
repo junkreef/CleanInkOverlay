@@ -3,6 +3,7 @@
     uv run python -m app.backend                     # http://127.0.0.1:8000  (serves web/dist when it has been built)
     uv run python -m app.backend --live [--device N] # also start the recorder on the OBS Virtual Camera
     options: --db PATH  --port N  --host H  --dry
+    settings: config.toml (optional; config.example.toml lists them), e.g. how many days of screen images to keep
 
 REST  (all JSON)
   GET  /api/summary                       counts, last match id, unlabelled signature count
@@ -36,6 +37,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if ROOT not in sys.path: sys.path.insert(0, ROOT)
+from app import config
 from app.store import Store
 from app.recorder import RecorderRunner
 
@@ -79,6 +81,17 @@ async def db_watch():
             print('db watch:', repr(e), flush=True)
 
 
+async def prune_images():
+    """keep samples/ from growing: drop screen / evidence images older than config.toml's images.keep_days (default 7;
+    Store.prune_images)"""
+    try:
+        days = config.image_keep_days()
+        gone = await asyncio.to_thread(store().prune_images, days)
+        if gone: print(f'pruned {len(gone)} images older than {days} days', flush=True)
+    except Exception as e:
+        print('prune images:', repr(e), flush=True)
+
+
 @asynccontextmanager
 async def lifespan(app):
     state['loop'] = asyncio.get_running_loop(); state['queue'] = asyncio.Queue()
@@ -88,6 +101,7 @@ async def lifespan(app):
     s.events.subscribe('signatures_changed', lambda p: push({'type': 'signatures_changed', **p}))
     s.events.subscribe('weapon_icons_changed', lambda p: push({'type': 'weapon_icons_changed', **p}))
     asyncio.create_task(broadcaster()); asyncio.create_task(db_watch())
+    asyncio.create_task(prune_images())
     state['runner'] = RecorderRunner(s, device=state['device'], dry=state['dry'], on_change=lambda st: push({'type': 'recorder', **st}))
     if state['live']: state['runner'].start()
     yield

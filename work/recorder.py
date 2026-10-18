@@ -9,7 +9,9 @@ Every sampled frame (~10 fps) is first classified: which screen is it (rule / me
 That runs regardless of state, so a screen is noticed whenever it appears; its content is analysed once,
 when it has been stable for a few samples. The state only says what we are accumulating:
   IDLE        nothing; a rule screen starts a match, a result screen alone stores a match without timeline
-  WAIT_HUD    rule screen seen; waiting for the HUD at 3:00 (slot icons kept) and the first 2:59 (t0)
+  WAIT_HUD    rule screen seen; waiting for the HUD at 3:00 (slot icons kept) and the first 2:59 (t0). A timer above
+              3:00 (5:00 = any rule but ナワバリ, e.g. in an イベントマッチ) is not supported yet: back to IDLE, and the
+              result is stored without a timeline, linked to the rule screen
   INGAME      timer, 8 slot states, own special gauge (state + fill level), own paint points (once per second),
               killfeed name, death bubble card, own-death texts
   WAIT_RESULT HUD gone; the medal screen and the result screen are picked up whenever they show up
@@ -109,6 +111,7 @@ class Recorder:
         self.medals_pending = None                            # (t, medals, image) from the last 表彰 screen
         self.ring = collections.deque()                       # (t, 480x270 frame) for the last RING_SECONDS
         self.rsp_t = None; self.prev_rsp = 0.0
+        self.unsupported = None                               # (t, ts, rule_image, clock) of a match whose rule has no timeline support
 
     def stamp(self, t):
         return datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S') if self.source == 'live' else f'{os.path.basename(self.source)}_{t:07.1f}'
@@ -125,6 +128,13 @@ class Recorder:
         if s == 'WAIT_HUD':
             if scr == 'hud':
                 rem, clock, sc = hud.read_timer(f, self.glyphs)
+                if rem is not None and rem > 180:                 # only ナワバリ starts at 3:00; a few samples so one misread does not count
+                    self.m['n_long'] = self.m.get('n_long', 0) + 1
+                    if self.m['n_long'] >= 3:
+                        self.log(f'[{t:8.1f}] timer at {clock}: not ナワバリ, timeline not supported -> result only')
+                        self.unsupported = dict(t=t, ts=self.m['ts'], rule_image=self.m['rule_image'], clock=clock)
+                        self.state = 'IDLE'; self.m = None
+                    return
                 if rem == 180 and len(self.m['start_patches']) < 3 and (not self.m['start_patches'] or t - self.m['start_patches'][-1][0] >= 0.4):
                     self.m['start_patches'].append((t, [hud.slot_img(f, i, 28).copy() for i in range(8)]))
                 if rem is not None and rem < 180:
@@ -155,15 +165,17 @@ class Recorder:
     def on_result(self, f, t):
         if self.state in ('INGAME', 'WAIT_RESULT'):
             self.finish(f, t)
-        elif self.state == 'IDLE' and t - self.t_last_store > 120:      # result without a rule screen (started mid-match)
+        elif self.state == 'IDLE' and t - self.t_last_store > 120:      # result without a timeline: started mid-match, or a rule without support
+            u = self.unsupported if self.unsupported and t - self.unsupported['t'] < 900 else None; self.unsupported = None
             self.m = dict(t_rule=None, card_tpl=None, start_patches=[], samples=[], kf=[], bubbles=[], t0=t, notes='no rule screen')
+            if u: self.m.update(ts=u['ts'], rule_image=u['rule_image'], notes=f'timer started at {u["clock"]}: not ナワバリ, no timeline')
             self.finish(f, t)
 
     def start_match(self, f, t):
         ts = self.stamp(t)
         path = self.store.save_image(ts, 'rule', f)
         self.m = dict(ts=ts, t_rule=t, rule_image=path, card_tpl=card_templates(read_cards(f)), start_patches=[], samples=[], kf=[], bubbles=[], t0=None, notes=None)
-        self.state = 'WAIT_HUD'; self.t_state = t; self.ring.clear(); self.rsp_t = None
+        self.state = 'WAIT_HUD'; self.t_state = t; self.ring.clear(); self.rsp_t = None; self.unsupported = None
         self.log(f'[{t:8.1f}] RULE SCREEN -> waiting for HUD')
 
     # ------------------------------------------------------------ in match

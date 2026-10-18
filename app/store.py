@@ -12,8 +12,11 @@ In-process notifications go through `store.events` (subscribe(topic, callback) /
     from app.store import Store
     s = Store()                      # data/splatoon.db under the repo root
     s.list_matches(); s.get_match(3); s.label_signature('s_ca328fa4', 'タカアシ経済特区')
+
+Old screen images are deleted by `Store.prune_images` (the backend runs it at startup; by hand:
+`uv run python -m app.store prune-images [--days N] [--dry]`; N defaults to config.toml's images.keep_days, itself 7).
 """
-import os, sys, json, threading
+import os, sys, json, subprocess, threading, time
 import numpy as np
 import cv2
 from sqlalchemy import delete, func, select, update
@@ -110,6 +113,34 @@ class Store:
         os.makedirs(self.bubbles_dir, exist_ok=True)
         p = os.path.join(self.bubbles_dir, name + '.jpg'); cv2.imencode('.jpg', sheet, [cv2.IMWRITE_JPEG_QUALITY, 85])[1].tofile(p)
         return rel(p)
+
+    def prune_images(self, keep_days=7, dry=False):
+        """delete screen PNGs (samples/matches) and bubble / miss evidence JPGs older than `keep_days` (file mtime), so the
+        folders stop growing. Kept: git-tracked files (fixtures), the screens that show an unlabelled signature (the labelling
+        page needs them), the per-match JSON. Match rows pointing at a deleted screen get that column cleared.
+        Returns the deleted repo-relative paths (what would be deleted when dry)."""
+        try:
+            out = subprocess.run(['git', 'ls-files', '-z', 'samples'], cwd=self.root, capture_output=True, check=True).stdout
+            tracked = {p for p in out.decode('utf-8').split('\0') if p}
+        except Exception as e:
+            print(f'[prune_images] git ls-files failed, nothing deleted: {e!r}', flush=True); return []
+        keep = set(tracked)
+        for it in self.unlabelled_signatures():
+            for ex in self.signature_examples(it['id']):
+                keep.update(ex.get(k) for k in ('result_image', 'medal_image', 'rule_image') if ex.get(k))
+        cutoff = time.time() - keep_days * 86400; gone = []
+        for d, ext in ((self.images_dir, '.png'), (self.bubbles_dir, '.jpg'), (self.misses_dir, '.jpg')):
+            if not os.path.isdir(d): continue
+            for name in os.listdir(d):
+                p = os.path.join(d, name); r = os.path.relpath(p, self.root).replace(os.sep, '/')
+                if not name.endswith(ext) or r in keep or os.path.getmtime(p) >= cutoff: continue
+                gone.append(r)
+                if not dry: os.remove(p)
+        if gone and not dry:
+            with self._lock, self.Session.begin() as s:
+                for col in (Match.rule_image, Match.result_image, Match.medal_image):
+                    s.execute(update(Match).where(col.in_(gone)).values({col.key: None}))
+        return gone
 
     def file_path(self, relpath):
         """absolute path of a data file the web may serve; None if outside the allowed folders"""
@@ -211,10 +242,12 @@ class Store:
         if sid not in lib.items: raise KeyError(sid)
         with self._lock, self.Session.begin() as s:
             lib.label(sid, label); lib.save()
-            # medals/stages already stored under the id become readable
+            # medals / stages / modes / rules already stored under the id become readable
             s.execute(update(Medal).where(Medal.sig_id == sid).values(name=label))
-            if lib.items[sid]['kind'] == 'stage':
-                s.execute(update(Match).where(Match.stage.is_(None), Match.raw_json.like(f'%"stage_id": "{sid}"%')).values(stage=label))
+            kind = lib.items[sid]['kind']
+            if kind in ('stage', 'mode', 'rule'):
+                col = getattr(Match, kind)
+                s.execute(update(Match).where(col.is_(None), Match.raw_json.like(f'%"{kind}_id": "{sid}"%')).values({kind: label}))
         self.events.publish('signatures_changed', {'id': sid})
 
     def signature_examples(self, sid, limit=3):
@@ -299,3 +332,21 @@ class Store:
 
     def close(self):
         self.engine.dispose()
+
+
+def main():
+    import argparse
+    ap = argparse.ArgumentParser(description='delete old screen / evidence images (see Store.prune_images)')
+    ap.add_argument('cmd', choices=['prune-images']); ap.add_argument('--db')
+    ap.add_argument('--days', type=float, default=None, help="default: config.toml's images.keep_days (7 without it)")
+    ap.add_argument('--dry', action='store_true', help='only list what would be deleted')
+    a = ap.parse_args(); s = Store(db_path=os.path.abspath(a.db) if a.db else None)
+    from app import config
+    days = a.days if a.days is not None else config.image_keep_days()
+    gone = s.prune_images(keep_days=days, dry=a.dry); s.close()
+    size = sum(os.path.getsize(os.path.join(ROOT, p)) for p in gone) if a.dry else None
+    print(f"{'would delete' if a.dry else 'deleted'} {len(gone)} images older than {days:g} days" + (f' ({size / 2**20:.0f} MB)' if size is not None else ''))
+
+
+if __name__ == '__main__':
+    main()
