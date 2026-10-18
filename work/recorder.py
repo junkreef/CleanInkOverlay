@@ -9,7 +9,9 @@ Every sampled frame (~10 fps) is first classified: which screen is it (rule / me
 That runs regardless of state, so a screen is noticed whenever it appears; its content is analysed once,
 when it has been stable for a few samples. The state only says what we are accumulating:
   IDLE        nothing; a rule screen starts a match, a result screen alone stores a match without timeline
-  WAIT_HUD    rule screen seen; waiting for the HUD at 3:00 (slot icons kept) and the first 2:59 (t0)
+  WAIT_HUD    rule screen seen; waiting for the HUD at 3:00 (slot icons kept) and the first 2:59 (t0). A timer above
+              3:00 (5:00 = any rule but ナワバリ, e.g. in an イベントマッチ) is not supported yet: back to IDLE, and the
+              result is stored without a timeline, linked to the rule screen
   INGAME      timer, 8 slot states, own special gauge (state + fill level), own paint points (once per second),
               killfeed name, death bubble card, own-death texts
   WAIT_RESULT HUD gone; the medal screen and the result screen are picked up whenever they show up
@@ -18,9 +20,10 @@ A rule screen while INGAME / WAIT_RESULT means the previous match was aborted or
 import argparse, json, os, sys, time, datetime, collections
 import cv2, numpy as np
 sys.path.insert(0, os.path.dirname(__file__))
-from result_parser import parse, Glyphs, RESULT_ROWS, NAME, crop as rcrop, white_mask
+from result_parser import parse, Glyphs, RESULT_ROWS, NAME, WEAPON, crop as rcrop, white_mask
 from signatures import signature, Library
-from weapon_match import load_main_weapons, imread_u
+from weapon_match import load_main_weapons, load_wiki_icons, icon_source, imread_u, fit_group
+from weapon_icons import harvestable, lossless, group_name, HARVEST_MIN_SCORE
 from scan_screens import looks_like_rule
 from live_result_watch import looks_like_result
 from rule_screen import read_cards
@@ -98,8 +101,8 @@ def classify(f):
 class Recorder:
     def __init__(self, source, store, dry=False, log=print, debug=False):
         self.source, self.store, self.dry, self.log, self.debug = source, store, dry, log, debug
-        self.icons = load_main_weapons()                      # 56 px composites for the result screen
-        self.icons_big = load_main_weapons(size=256)          # RGBA for HUD icon linking
+        self.load_icons()
+        self.wiki_icons = load_wiki_icons() if icon_source() != 'captured' else {}   # aligns / trims new captured templates
         self.glyphs = Glyphs(); self.lib = store.signatures()
         self.tpl_yar = cv2.imread(os.path.join(TPL_DIR, 'yarareta.png'), 0)
         self.tpl_rsp = cv2.imread(os.path.join(TPL_DIR, 'respawn.png'), 0)
@@ -108,6 +111,7 @@ class Recorder:
         self.medals_pending = None                            # (t, medals, image) from the last 表彰 screen
         self.ring = collections.deque()                       # (t, 480x270 frame) for the last RING_SECONDS
         self.rsp_t = None; self.prev_rsp = 0.0
+        self.unsupported = None                               # (t, ts, rule_image, clock) of a match whose rule has no timeline support
 
     def stamp(self, t):
         return datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S') if self.source == 'live' else f'{os.path.basename(self.source)}_{t:07.1f}'
@@ -124,6 +128,13 @@ class Recorder:
         if s == 'WAIT_HUD':
             if scr == 'hud':
                 rem, clock, sc = hud.read_timer(f, self.glyphs)
+                if rem is not None and rem > 180:                 # only ナワバリ starts at 3:00; a few samples so one misread does not count
+                    self.m['n_long'] = self.m.get('n_long', 0) + 1
+                    if self.m['n_long'] >= 3:
+                        self.log(f'[{t:8.1f}] timer at {clock}: not ナワバリ, timeline not supported -> result only')
+                        self.unsupported = dict(t=t, ts=self.m['ts'], rule_image=self.m['rule_image'], clock=clock)
+                        self.state = 'IDLE'; self.m = None
+                    return
                 if rem == 180 and len(self.m['start_patches']) < 3 and (not self.m['start_patches'] or t - self.m['start_patches'][-1][0] >= 0.4):
                     self.m['start_patches'].append((t, [hud.slot_img(f, i, 28).copy() for i in range(8)]))
                 if rem is not None and rem < 180:
@@ -154,15 +165,17 @@ class Recorder:
     def on_result(self, f, t):
         if self.state in ('INGAME', 'WAIT_RESULT'):
             self.finish(f, t)
-        elif self.state == 'IDLE' and t - self.t_last_store > 120:      # result without a rule screen (started mid-match)
+        elif self.state == 'IDLE' and t - self.t_last_store > 120:      # result without a timeline: started mid-match, or a rule without support
+            u = self.unsupported if self.unsupported and t - self.unsupported['t'] < 900 else None; self.unsupported = None
             self.m = dict(t_rule=None, card_tpl=None, start_patches=[], samples=[], kf=[], bubbles=[], t0=t, notes='no rule screen')
+            if u: self.m.update(ts=u['ts'], rule_image=u['rule_image'], notes=f'timer started at {u["clock"]}: not ナワバリ, no timeline')
             self.finish(f, t)
 
     def start_match(self, f, t):
         ts = self.stamp(t)
         path = self.store.save_image(ts, 'rule', f)
         self.m = dict(ts=ts, t_rule=t, rule_image=path, card_tpl=card_templates(read_cards(f)), start_patches=[], samples=[], kf=[], bubbles=[], t0=None, notes=None)
-        self.state = 'WAIT_HUD'; self.t_state = t; self.ring.clear(); self.rsp_t = None
+        self.state = 'WAIT_HUD'; self.t_state = t; self.ring.clear(); self.rsp_t = None; self.unsupported = None
         self.log(f'[{t:8.1f}] RULE SCREEN -> waiting for HUD')
 
     # ------------------------------------------------------------ in match
@@ -256,11 +269,52 @@ class Recorder:
                 if old: k = max(old, key=lambda k: k['t_last']); k['sig'] = c['sig']; k['t_last'] = t
                 else: kf.append(dict(t=c['t'], t_last=t, sig=c['sig']))
 
+    def load_icons(self):
+        # the unknown groups stay out of these sets: in the matcher a group made from one bad crop of a known weapon would
+        # compete with that weapon's template and take its later rows; harvest_icons tries the groups after the matcher
+        lib = self.store.weapon_icons(); d = lib.captured_dir
+        self.icons = load_main_weapons(captured_dir=d)                # 56 px composites for the result screen
+        self.icons_big = load_main_weapons(size=256, captured_dir=d)  # RGBA for HUD icon linking
+        self.icons_version = lib.version
+
+    def harvest_icons(self, f, res, ts):
+        """keep confidently matched result-row icons as samples of our own weapon templates (weapon_icons.py), so the
+        wiki icons get replaced as weapons show up; an icon matching no weapon goes to the unknown group it fits, or a new
+        one (row['weapon_unknown']), to be named on the web page. So does an icon only a wiki icon names, with too little
+        confidence to be a sample (ホットブラスター艶 0.926, ソイチューバー 0.93): it waits in a group with the wiki's name as
+        the guess, else such a weapon would never get a template. Live only: a recording's H.264 crops can pass `lossless`
+        but are noisy enough to start groups of known weapons. Reloads the icon sets when a template changed."""
+        if self.source != 'live': return
+        lib = self.store.weapon_icons(); added = []; v = lib.version
+        for row, y in zip(res['rows'], RESULT_ROWS.values()):
+            stem = f'{ts}_{row["row"]}'
+            guess = row['weapon'] if (row['weapon'] and row['weapon'] not in self.icons.captured
+                                      and (row['weapon_score'] or 0) < HARVEST_MIN_SCORE) else None   # a wiki name to confirm
+            if row['weapon'] and not guess:
+                if not (harvestable(row) and lib.wants(row['weapon'], stem)): continue
+                c = rcrop(f, WEAPON, y)
+                if not lossless(c): continue
+                lib.add_sample(row['weapon'], c, stem, wiki=self.wiki_icons.get(row['weapon'])); added.append(row['weapon'])
+            elif guess or (row['weapon_score'] or 0) >= 0.6:          # an icon, but none we know (score 0.6: not an empty row)
+                c = rcrop(f, WEAPON, y)
+                if not lossless(c): continue
+                gid = fit_group(c, lib)
+                if gid:
+                    lib.add_sample(group_name(gid), c, stem)
+                    if guess and not lib.guess(gid): lib.guesses[gid] = guess; lib.dirty.add(group_name(gid))
+                else: gid = lib.new_group(c, stem, guess)
+                row['weapon_unknown'] = gid; added.append(f'? {gid}')
+        if added:
+            self.store.save_libraries()
+            if lib.version != v: self.load_icons()
+            self.log(f'    weapon icon samples added: {", ".join(added)}')
+
     # ------------------------------------------------------------ end of match
     def finish(self, f, t):
         m = self.m; self.state = 'IDLE'
         res = None; result_image = None; ts = m.get('ts') or self.stamp(t)
         if f is not None:
+            if self.store.weapon_icons().version != self.icons_version: self.load_icons()   # e.g. an icon named on the web
             res = parse(f, self.icons, self.glyphs, self.lib); self.store.save_libraries()
             if not result_sane(res):
                 self.log(f'[{t:8.1f}] result screen did not parse sanely (self row / weapons / points) - discarded')
@@ -269,6 +323,7 @@ class Recorder:
                 res = None; f = None
         m['ts'] = ts
         if f is not None:
+            if not self.dry: self.harvest_icons(f, res, ts)
             result_image = self.store.save_image(ts, 'result', f)
             for row, y in zip(res['rows'], RESULT_ROWS.values()):
                 row['name_sig'] = signature(rcrop(f, NAME, y))          # raw look of the name, matched against killfeed rows below (not stored, not identified)
@@ -394,9 +449,10 @@ def timeline_rows(S, t0):
 
 
 def result_sane(res):
-    """a real result screen has a self row, mostly recognised weapons and numeric points"""
+    """a real result screen has a self row, weapon icons (mostly matching something, at least 3 known: a copy without many
+    templates yet sees unknown weapons) and numeric points"""
     if not res or not any(r['self'] for r in res['rows']): return False
-    if sum(1 for r in res['rows'] if r['weapon']) < 6: return False
+    if sum(1 for r in res['rows'] if (r['weapon_score'] or 0) >= 0.6) < 6 or sum(1 for r in res['rows'] if r['weapon']) < 3: return False
     return sum(1 for r in res['rows'] if to_int(r['points']) is not None) >= 6
 
 

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { api, post, subscribe } from '../api.js'
+import WeaponIcons from './WeaponIcons.jsx'
 
 const KIND = { stage: 'ステージ', medal: '表彰', mode: 'モード', rule: 'ルール' }
 
@@ -50,6 +51,7 @@ export default function Signatures() {
       </div>
       {list.slice(0, 30).map((it) => <Item key={it.id} it={it} onDone={load} />)}
       {list.length === 0 && <p className="muted">未ラベルの署名はありません</p>}
+      <WeaponIcons />
     </section>
   )
 }

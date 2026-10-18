@@ -39,6 +39,7 @@ input, select { background: var(--bg); color: var(--fg); border: 1px solid var(-
 .example .thumb { width: 480px; display: block; border-radius: 4px; }
 .answer { grid-column: 1 / -1; display: flex; gap: 10px; align-items: center; } .answer input { width: 4em; text-align: center; }
 .answer .hint { color: var(--muted); font-size: 12px; }
+.unknown .glyph img.icon { width: 90px; height: 70px; margin-bottom: 4px; } .answer input.wide { width: 16em; text-align: left; }
 .recorder { position: relative; display: flex; align-items: center; gap: 8px; }
 .recorder .rec { cursor: pointer; }
 .recpanel { position: absolute; right: 0; top: 34px; width: 560px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px; box-shadow: 0 8px 24px #0008; }

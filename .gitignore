@@ -7,3 +7,5 @@ work/tmp/
 data/*.db-shm
 data/*.db-wal
 data/*.db.bak-*
+data/icon_samples/
+config.toml
