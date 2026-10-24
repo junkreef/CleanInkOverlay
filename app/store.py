@@ -194,9 +194,14 @@ class Store:
             out['medals'] = [d.to_dict() for d in m.medals]
         return out
 
-    def stats(self):
+    def stats(self, since=None, mode=None):
+        """the stat tables (optionally only matches started at/after `since` / of one `mode`), my newest results,
+        and the modes there are to pick from"""
         with self.Session() as s:
-            return queries.stats(s)
+            out = queries.stats(s, since, mode)
+            out['recent'] = queries.rows(s, queries.recent_results(since=since, mode=mode))
+            out['modes'] = list(s.scalars(select(Match.mode).where(Match.mode.is_not(None)).distinct().order_by(Match.mode)))
+        return out
 
     def overlay(self, since=None, limit=8):
         """data for the stream overlay: session totals (matches started at/after `since`, ISO local time; None = everything),
