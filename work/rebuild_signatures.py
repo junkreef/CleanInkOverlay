@@ -21,7 +21,8 @@ from medals import parse_medals
 
 
 def rebuild(apply=False):
-    st = Store(); lib = Library(); old_ids = list(lib.items); lib.items = {}
+    st = Store(); lib = Library(); old_ids = list(lib.items)
+    lib.items = {k: it for k, it in lib.items.items() if it['kind'] == 'panel_weapon'}   # learnt from scoreboards (panel.py), not from these screens
     log = dict(banners=0, medals=0, medals_added=0, medals_unmatched=0, columns_filled=0, conflicts=[], renamed=[])
     votes = {}; pending = []                                     # medal sig id -> Counter(stored name); Medal rows to name
     with st.Session.begin() as s:
