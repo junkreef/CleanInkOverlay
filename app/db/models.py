@@ -43,9 +43,11 @@ class Match(Base):
     result: Mapped[str | None] = mapped_column(Text)                        # win / lose / draw
     my_pct: Mapped[float | None] = mapped_column(REAL)                      # ナワバリ: 塗りポイント %
     enemy_pct: Mapped[float | None] = mapped_column(REAL)
-    my_count: Mapped[int | None] = mapped_column(Integer)                   # ガチ (future)
+    my_count: Mapped[int | None] = mapped_column(Integer)                   # ガチ: 'N カウント' (judge / scoreboard); the side that knocked out = 100
     enemy_count: Mapped[int | None] = mapped_column(Integer)
-    knockout: Mapped[int | None] = mapped_column(Integer)                   # 1 = KO (future)
+    knockout: Mapped[int | None] = mapped_column(Integer)                   # ガチ: 1 = ノックアウト! (by the winner), 0 = ended on time
+    my_team_points: Mapped[int | None] = mapped_column(Integer)             # ガチ: the team's 'Np' under the count (judge) / on the WIN! LOSE... row
+    enemy_team_points: Mapped[int | None] = mapped_column(Integer)
     duration_s: Mapped[float | None] = mapped_column(REAL)                  # timer start -> Finish
     source: Mapped[str | None] = mapped_column(Text)                        # 'live' or the video file name
     rule_image: Mapped[str | None] = mapped_column(Text)                    # saved PNG of the rule screen

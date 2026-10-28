@@ -242,7 +242,7 @@
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const fmtInt = (n) => (n ?? 0).toLocaleString('ja-JP');
   const resultText = { win: 'WIN!', lose: 'LOSE...', draw: 'DRAW' };
-  const stateText = { IDLE: 'ロビー', WAIT_HUD: 'バトル準備中', INGAME: 'バトル中!', WAIT_RESULT: 'リザルト待ち' };
+  const stateText = { IDLE: 'ロビー', WAIT_HUD: 'バトル準備中', INGAME: 'バトル中!', WAIT_RESULT: 'リザルト待ち', NONTURF: 'バトル中!' };
   let lastId = null, highlightId = null;      // highlightId: the match that gets the NEW! badge (kept ~90 s, survives the periodic reload)
 
   function medalName(m) { return /^m_[0-9a-f]+$/i.test(m.name) ? '？メダル' : m.name; }
@@ -330,7 +330,7 @@
 
   function renderRecorder(r) {
     const el = $('live'); const on = !!r?.running;
-    el.className = on ? (r.state === 'INGAME' ? 'on battle' : 'on') : '';
+    el.className = on ? (r.state === 'INGAME' || r.state === 'NONTURF' ? 'on battle' : 'on') : '';
     $('live-text').textContent = on ? (stateText[r.state] || '記録中') : '記録オフ';
   }
 

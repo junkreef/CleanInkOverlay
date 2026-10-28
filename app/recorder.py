@@ -28,7 +28,7 @@ def run_video(store, path, t_from=0.0, t_to=None, dry=False, debug=False, log=pr
         ok, f = cap.read()
         if not ok: break
         rec.process(f, i / fps); i += 1
-    if rec.state in ('INGAME', 'WAIT_RESULT') and rec.m: rec.finish(None, i / fps)
+    if rec.state in ('INGAME', 'WAIT_RESULT', 'NONTURF') and rec.m: rec.finish(None, i / fps)
     cap.release(); log(f'done {i} frames in {time.time() - t_start:.0f}s')
     return rec
 
