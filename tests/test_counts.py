@@ -31,6 +31,11 @@ def test_scoreboard_knockout():
     assert s == dict(left=dict(count=100, ko=True), right=dict(count=0, ko=False), win_points=500, lose_points=0)
 
 
+def test_scoreboard_counts():
+    s = read_scoreboard_counts(frame(os.path.join('results', 'yagura2.png')), G)  # ガチヤグラ, 2026-10-28_23-06-42.mp4: 43カウント / 40カウント, 215 p / 200 p
+    assert s == dict(left=dict(count=43, ko=False), right=dict(count=40, ko=False), win_points=215, lose_points=200)
+
+
 def test_turf_screens_have_no_counts():
     none_j = {'my': dict(count=None, ko=None, points=None), 'enemy': dict(count=None, ko=None, points=None)}
     none_s = dict(left=dict(count=None, ko=None), right=dict(count=None, ko=None), win_points=None, lose_points=None)

@@ -31,6 +31,11 @@ BANNER_SCALE = 0.5               # signature = the canvas mask at half resolutio
 BANNER_MIN_W = 40                # px: narrower white is no text (the shortest banner text, バイガイ亭, is 86 px wide; an 8 px
                                  # speck once became an unlabelled "stage" s_da06710c that no screen showed, 2026-10-18)
 BANNER_THR = 0.85                # same text on another screen correlates >= 0.99, the closest different stage names 0.61
+HOLES = {'0': 1, '6': 1, '9': 1, 'p': 1, '8': 2}               # enclosed holes of the row glyphs (others 0): every labelled glyph
+HOLE_SETS = ('big', 'small', 'panel_big', 'panel_small')        # has them. The mean templates alone read small 08 as 06 / 00
+                                 # (101 rows of the stored scoreboards, 11 panels) and 06 as 08 (2026-10-29)
+STAGE_SHORT_RULE = 56            # px: the stage name follows the rule name in its tag, so after a 5-character rule (ガチヤグラ;
+                                 # ガチエリア / ガチアサリ presumably) it starts 56 px left of where it does after ナワバリバトル / ガチホコバトル
 
 
 def white_mask(bgr, thr=170):
@@ -47,6 +52,13 @@ def norm_glyph(mask, box):
     x, y, w, h = box
     g = mask[y:y + h, x:x + w] * 255
     return cv2.resize(g, GLYPH_SIZE, interpolation=cv2.INTER_AREA).astype(np.float32) / 255
+
+
+def holes(mask, box):
+    """enclosed background regions of a glyph (8: 2; 0 / 6 / 9 / p: 1)"""
+    x, y, w, h = box
+    n, _ = cv2.connectedComponents(1 - np.pad(mask[y:y + h, x:x + w], 1), connectivity=4)
+    return n - 2                                               # minus the label 0 (the glyph) and the outside
 
 
 def merge_boxes(boxes, gap=2):
@@ -73,9 +85,12 @@ class Glyphs:
         tpl = self.sets[which]  # the % bar uses a heavier font than the rows, so it has its own set
         out = ''; scores = []
         for b in boxes:
-            g = norm_glyph(mask, b)
-            best = max(tpl.items(), key=lambda kv: float(np.corrcoef(g.ravel(), kv[1].ravel())[0, 1]))
-            out += best[0]; scores.append(round(float(np.corrcoef(g.ravel(), best[1].ravel())[0, 1]), 2))
+            g = norm_glyph(mask, b).ravel()
+            cands = tpl
+            if which in HOLE_SETS:                             # only the characters with as many holes, if any
+                n = holes(mask, b); cands = {ch: t for ch, t in tpl.items() if HOLES.get(ch, 0) == n} or tpl
+            sc = {ch: float(np.corrcoef(g, t.ravel())[0, 1]) for ch, t in cands.items()}
+            ch = max(sc, key=sc.get); out += ch; scores.append(round(sc[ch], 2))
         return out, scores
 
 
@@ -91,15 +106,28 @@ def tag_end(f, x, pad, x_max):
     return x_max
 
 
+def banner_text(band):
+    """white, unsaturated px of a banner band (the text; the stage photo around the tags is colourful)"""
+    return ((band.min(axis=2) > 190) & ((band.max(axis=2).astype(int) - band.min(axis=2).astype(int)) < 40)).astype(np.uint8)
+
+
+def stage_x(f):
+    """where the stage name starts: told by the gap between the rule name and it (no text in the ~40 px before it)"""
+    b = BANNER['stage']; band = banner_text(f[b['y']:b['y'] + b['h'], :])
+    for x in (b['x'], b['x'] - STAGE_SHORT_RULE):
+        if not band[:, x - 31:x - 5].any(): return x
+    return b['x']
+
+
 def banner_signature(f, kind):
     """kind = 'mode' / 'rule' / 'stage' -> fixed-size float vector (None when there is no text). Every text of a kind
     is laid on the same canvas, so the same text always gives the same vector and different texts differ wherever
     their glyphs differ; identified with signatures.Library like the medal names."""
     b = BANNER[kind]; x, y, h, w = b['x'], b['y'], b['h'], b['w']
+    if kind == 'stage': x = stage_x(f)
     x1 = x + w if b['pad'] is None else min(x + w, tag_end(f, x, b['pad'], x + w + 40) - 3)
     if x1 - x < BANNER_MIN_W: return None                     # no dark tag there (2026-09-12_23-20-07: the band came out -3 px)
-    band = f[y - 1:y + h + 1, x:x1]
-    m = ((band.min(axis=2) > 190) & ((band.max(axis=2).astype(int) - band.min(axis=2).astype(int)) < 40)).astype(np.uint8)
+    m = banner_text(f[y - 1:y + h + 1, x:x1])
     n, lab, stats, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
     for i in range(1, n):
         if stats[i][4] < 12: m[lab == i] = 0
@@ -174,6 +202,7 @@ def build_glyphs(labelled, out=GLYPH_DIR, pct_labelled=None):
             y = RESULT_ROWS[row]; pm, pb, sm, sb = row_glyphs(f, y)
             add('big', pm, pb, pts); add('small', sm, sb, k + d + s)
     for f, gt in (pct_labelled or labelled):
+        if gt['pct'] is None: continue                         # ガチルール: counts there, no %
         for r, text in ((PCT_L, gt['pct'][0]), (PCT_R, gt['pct'][1])):
             m = white_mask(crop(f, r)); b = merge_boxes(glyph_boxes(m, 6, 45)); add('pct', m, b, text)
     os.makedirs(out, exist_ok=True)
@@ -198,6 +227,13 @@ GT = {
 }
 GT['live1'] = {'rows': [('win1', '1077p', 'x05', 'x03', 'x02'), ('win2', '1074p', 'x07', 'x05', 'x03'), ('win3', '914p', 'x01', 'x02', 'x03'), ('win4', '882p', 'x09', 'x02', 'x03'),
                         ('lose1', '1438p', 'x05', 'x02', 'x05'), ('lose2', '966p', 'x02', 'x04', 'x02'), ('lose3', '956p', 'x04', 'x04', 'x02'), ('lose4', '487p', 'x05', 'x08', 'x00')], 'pct': ('52.0%', '45.2%')}
+# ガチルール (2026-10-28_22-51-57.mp4 / 2026-10-28_23-06-42.mp4): live1 held the only small 8 and 9, so 08 read as 06 / 00
+GT['hoko1'] = {'rows': [('win1', '1760p', 'x12', 'x04', 'x08'), ('win2', '1062p', 'x07', 'x05', 'x02'), ('win3', '727p', 'x04', 'x05', 'x04'), ('win4', '1071p', 'x07', 'x05', 'x03'),
+                        ('lose1', '1023p', 'x09', 'x05', 'x04'), ('lose2', '1229p', 'x07', 'x05', 'x02'), ('lose3', '1145p', 'x11', 'x05', 'x05'), ('lose4', '701p', 'x09', 'x05', 'x03')], 'pct': None}
+GT['yagura2'] = {'rows': [('win1', '1449p', 'x14', 'x03', 'x06'), ('win2', '1061p', 'x12', 'x06', 'x03'), ('win3', '1807p', 'x10', 'x07', 'x06'), ('win4', '1495p', 'x06', 'x07', 'x05'),
+                          ('lose1', '1222p', 'x10', 'x06', 'x03'), ('lose2', '1622p', 'x06', 'x05', 'x06'), ('lose3', '1220p', 'x13', 'x06', 'x04'), ('lose4', '1243p', 'x09', 'x14', 'x04')], 'pct': None}
+GT['yagura3'] = {'rows': [('win1', '1161p', 'x13', 'x03', 'x05'), ('win2', '1855p', 'x09', 'x04', 'x05'), ('win3', '821p', 'x07', 'x10', 'x03'), ('win4', '1329p', 'x09', 'x06', 'x04'),
+                          ('lose1', '1046p', 'x10', 'x07', 'x03'), ('lose2', '1287p', 'x05', 'x08', 'x04'), ('lose3', '2151p', 'x08', 'x08', 'x08'), ('lose4', '1064p', 'x08', 'x07', 'x04')], 'pct': None}
 GT_STAGE = {'v1m1': 'コンブトラック', 'v1m2': 'ユノハナ大渓谷', 'v1m3': 'ユノハナ大渓谷', 'v2m1': 'ユノハナ大渓谷', 'v2m2': 'ユノハナ大渓谷', 'r1640': 'タラポートショッピングパーク', 'live1': 'スメーシーワールド'}
 GT_WEAPON = {'v1m1': ['プロモデラーMG', 'カーボンローラーANGL', 'スプラシューター', 'スプラローラー', 'N-ZAP85', 'ハイドラント圧', 'スクイックリンα', 'リッター4K'],
              'r1640': [None, 'プロモデラーMG', None, '4Kスコープ', None, 'リッター4K', 'リッター4K', None]}
@@ -220,6 +256,6 @@ if __name__ == '__main__':
             bad += got != exp
             if got != exp or '-v' in sys.argv:
                 print(f'  {k} {row["row"]}: got {got} expected {exp}  weapon={row["weapon"]}')
-        pct_ok = (r['pct_left'], r['pct_right']) == GT[k]['pct']
+        pct_ok = GT[k]['pct'] is None or (r['pct_left'], r['pct_right']) == GT[k]['pct']
         print(f'{k} [{"train" if k in train else "test"}]: rows wrong {bad}/8, pct {"ok" if pct_ok else (r["pct_left"], r["pct_right"])}, self={r["self_result"]}, stage={r["stage"]}, {r["mode"]}/{r["rule"]}')
     lib.save()
