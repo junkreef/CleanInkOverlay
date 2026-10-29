@@ -139,6 +139,21 @@ def test_gachi_counts_knockouts_and_the_rule_filter(tmp_path):
     s.close()
 
 
+def test_objective_timeline_and_the_rule_name_of_the_rule_screen(tmp_path):
+    s = Store(root=str(tmp_path), db_path=str(tmp_path / 'obj.db'))            # its own signatures.json under tmp_path
+    match, players, events, medals, _ = sample_match()
+    match.update(rule=None, raw_json=json.dumps({'title_id': 't_test1'}))
+    timeline = [dict(t_s=0, points=None, gauge=0.0, ready=0, obj_pos=0.3, obj_holder=None, my_best=0.0, enemy_best=0.0, my_count=3, enemy_count=0, overtime=0),
+                dict(t_s=301, points=None, gauge=0.5, ready=0, obj_pos=78.1, obj_holder='my', my_best=78.1, enemy_best=80.0, overtime=1)]
+    mid = s.insert_match(match, players, events, medals, timeline)
+    assert [(r['t_s'], r['obj_pos'], r['obj_holder'], r['my_best'], r['my_count'], r['overtime']) for r in s.get_match(mid)['timeline']] == [(0, 0.3, None, 0.0, 3, 0), (301, 78.1, 'my', 78.1, None, 1)]
+    s.signatures().items['t_test1'] = {'kind': 'title', 'label': None, 'sig': [0.0]}
+    assert s.signature_examples('t_test1') == [{'match_id': mid, 'rule_image': None, 'result_image': None}]
+    s.label_signature('t_test1', 'ガチヤグラ')                                        # naming the rule screen's rule name fills rule
+    assert s.get_match(mid)['rule'] == 'ガチヤグラ'
+    s.close()
+
+
 def test_check_constraints_are_enforced(tmp_path):
     s = Store(db_path=str(tmp_path / 'chk.db'))
     match, players, events, medals, timeline = sample_match()

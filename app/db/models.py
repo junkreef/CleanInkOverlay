@@ -4,7 +4,7 @@
   MatchPlayer  8 rows per match in HUD slot order (0-3 ally, 4-7 enemy): weapon + result-screen stats
   Event        timeline: t_ms from timer start; death (any slot, HUD), kill (self -> target),
                killed_by (killer -> self), special (own activation), special_ready (own gauge became full)
-  Timeline     once per second (own HUD): paint points and special gauge fill
+  Timeline     once per second (own HUD): paint points and special gauge fill; ヤグラ / ホコ track, エリア counts, overtime
   Medal        表彰 screen entries (name = label, or the signature id while unlabelled)
   Weapon       master from the wiki sections (class), used for grouping
 Player names are not recorded (random matchmaking): players are identified within a match by HUD slot and weapon.
@@ -111,10 +111,21 @@ class Timeline(Base):
     __tablename__ = 'timeline'
 
     match_id: Mapped[int] = mapped_column(ForeignKey('matches.id', ondelete='CASCADE'), primary_key=True)
-    t_s: Mapped[int] = mapped_column(Integer, primary_key=True)             # whole seconds since timer start (0-180)
+    t_s: Mapped[int] = mapped_column(Integer, primary_key=True)             # whole seconds since timer start (0-180; other rules: their length + overtime)
     points: Mapped[int | None] = mapped_column(Integer)                     # 塗りポイント shown top right (first clean read in the second; NULL = unread)
     gauge: Mapped[float | None] = mapped_column(REAL)                       # special gauge fill 0..1 (median over the second)
     ready: Mapped[int | None] = mapped_column(Integer)                      # 1 = gauge full (white ring) in the second
+    # ガチヤグラ / ガチホコ: the HUD track, -100 = my goal .. 0 = centre .. +100 = the enemy goal (a position on the line, not a count)
+    obj_pos: Mapped[float | None] = mapped_column(REAL)                     # where the ヤグラ / ホコ icon is
+    obj_holder: Mapped[str | None] = mapped_column(Text)                    # 'my' / 'enemy' rides / carries it (エリア: holds every zone), NULL = nobody / not read
+    my_best: Mapped[float | None] = mapped_column(REAL)                     # how far my team has pushed (0..100, only grows)
+    enemy_best: Mapped[float | None] = mapped_column(REAL)                  # how far the enemy has pushed towards my goal (0..100)
+    # ガチエリア: both counts as the judge screen gives them (100 - 「のこり」), and obj_holder = the team whose box is lit
+    my_count: Mapped[int | None] = mapped_column(Integer)                   # (it holds every zone and is counting down)
+    enemy_count: Mapped[int | None] = mapped_column(Integer)
+    my_penalty: Mapped[int | None] = mapped_column(Integer)                 # ガチエリア 「+N」 under the box: still to pay before the count moves
+    enemy_penalty: Mapped[int | None] = mapped_column(Integer)              # (0 = none; NULL = not read)
+    overtime: Mapped[int | None] = mapped_column(Integer)                   # 1 = 「延長中!」 in the second
 
     match: Mapped[Match] = relationship(back_populates='timeline')
 

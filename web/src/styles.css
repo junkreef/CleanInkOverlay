@@ -92,3 +92,21 @@ table.stat tr.blank td { border-bottom-color: transparent; }
 .score .ko { display: inline-block; padding: 0 5px; margin-left: 5px; border-radius: 4px; background: var(--lose); color: #000; font-size: 11px; font-weight: 700; }
 h2 small .score { color: var(--fg); font-weight: 600; }
 .kpi-of { font-size: 16px; color: var(--muted); }
+/* ガチ count chart (match detail): 0 in the middle, my team up, the enemy down */
+.objchart { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.objchart svg { width: 100%; height: auto; display: block; }
+.objchart .grid { stroke: var(--line); } .objchart .grid.zero { stroke: #4a4f5c; }
+.objchart .axis { fill: var(--muted); font-size: 11px; }
+.objchart .ot { fill: #f5d13b14; }
+.objchart .best { fill: none; stroke-width: 2; } .objchart .best.my { stroke: #4f8cff; } .objchart .best.enemy { stroke: #ff9a3c; }
+.objlegend { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; margin-top: 4px; }
+.objlegend .bar { display: inline-block; width: 14px; height: 2px; margin-right: 4px; vertical-align: middle; }
+.objlegend .bar.my { background: #4f8cff; } .objlegend .bar.enemy { background: #ff9a3c; }
+.objchart.gachi { position: relative; }
+.objchart .band.my { fill: #4f8cff; opacity: .15; } .objchart .band.enemy { fill: #ff9a3c; opacity: .15; }
+.objchart .floor { fill: none; stroke: #d6d9e0; stroke-width: 1.5; stroke-linecap: round; opacity: .9; } .objchart .floor.dot { stroke-dasharray: 2 3; }
+.objchart .crosshair { stroke: var(--fg); opacity: .5; pointer-events: none; }
+.objchart .tip { position: absolute; pointer-events: none; background: #262a33ee; border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font-size: 12px; line-height: 1.5; white-space: nowrap; z-index: 2; }
+.objchart .tip .bar { display: inline-block; width: 10px; height: 2px; margin-right: 6px; vertical-align: middle; } .objchart .tip .bar.my { background: #4f8cff; } .objchart .tip .bar.enemy { background: #ff9a3c; }
+.objlegend i { vertical-align: middle; } .objlegend .swatch { display: inline-block; width: 14px; height: 10px; margin-right: 4px; background: #4f8cff2e; border-top: 2px solid #4f8cff; }
+.objlegend .fl { display: inline-block; width: 14px; height: 0; margin-right: 4px; border-top: 2px dotted #d6d9e0; } .objlegend .fl.solid { border-top-style: solid; }
