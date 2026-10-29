@@ -26,8 +26,8 @@ Any other rule ('nonturf': the ガチ rules, a new イベントマッチ rule) i
 whose HUD has no paint points: its HUD is told by the timer box (hud.timer_hud), it can go into overtime (「延長中!」,
 up to +5 min) and its % is never stored (these rules show counts / ノックアウト! where ナワバリ has the % bar). Kills,
 deaths and specials come from the same squids / killfeed / bubbles / gauge as in ナワバリ. ガチヤグラ / ガチホコ also
-read the objective's track once per second (work/objective.py: position, who holds it, each team's best), ガチエリア
-both counts and who holds every zone (work/area.py).
+read the objective's track once per second (work/objective.py: position, who holds it, each team's best), ガチエリア /
+ガチアサリ both counts, the penalties and who holds the zones / attacks (work/area.py).
 """
 import argparse, json, os, sys, time, datetime, collections, math
 import cv2, numpy as np
@@ -67,7 +67,7 @@ COUNT_FIELDS = ('my_count', 'enemy_count', 'knockout', 'my_team_points', 'enemy_
 JUDGE_GAP = 30.0                  # s: judge frames further apart than this belong to different matches
 RESULT_WAIT = 300.0               # s: a match ends without its result screen when nothing came for this long (after the HUD / the last judge or medal screen)
 TITLE_THR = 0.8                   # rule-name signature: the same name >= 0.91 (269 stored ナワバリ screens), ガチホコバトル vs ナワバリバトル 0.63
-RULE_ANALYSIS = {'ナワバリバトル': 'turf', 'ガチヤグラ': 'track', 'ガチホコバトル': 'track', 'ガチエリア': 'zones', 'ガチアサリ': 'gachi'}   # other names: 'other'
+RULE_ANALYSIS = {'ナワバリバトル': 'turf', 'ガチヤグラ': 'track', 'ガチホコバトル': 'track', 'ガチエリア': 'zones', 'ガチアサリ': 'zones'}   # other names: 'other'
 OVERTIME_MAX = 300                # s: overtime lasts at most 5 minutes
 OBJ_MIN_SHARE = 0.3               # an unnamed rule keeps its track / area reads when they cover this share of its HUD seconds (track on ガチエリア: 0)
 END_GRACE = 15.0                  # s without HUD after 0:00 / overtime before a non-ナワバリ match counts as over (a splat in overtime shows the map ~10 s)
@@ -246,7 +246,7 @@ class Recorder:
             m['n_long'] = m.get('n_long', 0) + 1
             if m['n_long'] < 3: return
             if m.get('analysis') == 'turf': self.log(f'[{t:8.1f}] rule name says ナワバリバトル but the timer starts at {clock}: going by the timer')
-            m.update(nonturf=True, dur=300 if m.get('analysis') in ('track', 'zones', 'gachi') else 60 * math.ceil(rem / 60))   # an unknown rule: its first read, to the minute
+            m.update(nonturf=True, dur=300 if m.get('analysis') in ('track', 'zones') else 60 * math.ceil(rem / 60))   # an unknown rule: its first read, to the minute
             if m['analysis'] in (None, 'turf'): m['analysis'] = None   # unnamed: the track is looked for each second
             self.log(f'[{t:8.1f}] timer at {clock}: {m.get("title") or "not ナワバリ"}, a {m["dur"] // 60}:00 match')
         dur = m['dur']

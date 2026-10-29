@@ -20,7 +20,7 @@ SLOT_Y = (38, 112)
 TIMER = (48, 104, 905, 1015)
 POINTS = (45, 110, 1500, 1690)
 OVERTIME = (38, 114, 885, 1035)   # around the timer box: 「延長中!」 in team colours with a black outline, matched by the outline
-OVERTIME_THR = 0.6                # the outline template scores 0.89-1.00 over the overtime, <= 0.16 on any other HUD / screen
+OVERTIME_THR = 0.6                # the letters (outline + inside) score 0.90-1.00 over the overtime, <= 0.32 on any other HUD / screen
 KILLFEED = (995, 1045, 720, 1200); BUBBLE = (390, 490, 780, 1140); BOTTOM = (975, 1065, 780, 1140); RESPAWN = (960, 1030, 1550, 1910)
 ICON_SIZES = (88, 92, 96)
 
@@ -56,12 +56,19 @@ _overtime_tpl = None
 
 
 def overtime(f):
-    """the timer box says 「延長中!」: its black outline matched against work/templates/overtime.png (colour-free: the box
-    and letters are in the teams' colours)"""
+    """the timer box says 「延長中!」: the black outline of its letters matched against work/templates/overtime.png
+    (colour-free: the box and letters are in the teams' colours). Only the letters count, outline and inside: the box
+    around them can go black (ガチアサリ: the box empties from the top as the overtime runs out)"""
     global _overtime_tpl
-    if _overtime_tpl is None: _overtime_tpl = cv2.imread(os.path.join(os.path.dirname(__file__), 'templates', 'overtime.png'), 0)
-    m = ((crop(f, OVERTIME).max(axis=2) < 70) * 255).astype(np.uint8)
-    return float(cv2.matchTemplate(m, _overtime_tpl, cv2.TM_CCOEFF_NORMED).max()) >= OVERTIME_THR
+    if _overtime_tpl is None:
+        tpl = cv2.imread(os.path.join(os.path.dirname(__file__), 'templates', 'overtime.png'), 0)
+        pad = cv2.copyMakeBorder((tpl > 0).astype(np.uint8), 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=0)
+        cv2.floodFill(pad, None, (0, 0), 2)                   # outside the letters
+        _overtime_tpl = tpl.astype(np.float32), (pad[1:-1, 1:-1] != 2).astype(np.float32)
+    tpl, letters = _overtime_tpl
+    m = ((crop(f, OVERTIME).max(axis=2) < 70) * 255).astype(np.float32)
+    r = cv2.matchTemplate(m, tpl, cv2.TM_CCOEFF_NORMED, mask=letters)
+    return float(np.nan_to_num(r, nan=0.0, posinf=0.0, neginf=0.0).max()) >= OVERTIME_THR
 
 
 def timer_hud(f, glyphs):

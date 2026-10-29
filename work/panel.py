@@ -18,7 +18,7 @@ medal banners (medals.py), and the four gear cards (weapon first). It also shows
 """
 import cv2, json, numpy as np, os, sys
 sys.path.insert(0, os.path.dirname(__file__))
-from result_parser import Glyphs, GLYPH_DIR, white_mask, glyph_boxes, merge_boxes, norm_glyph, banner_signature, BANNER_THR
+from result_parser import Glyphs, GLYPH_DIR, white_mask, glyph_boxes, merge_boxes, norm_glyph, banner_identify
 
 ROOT = os.path.join(os.path.dirname(__file__), '..')
 POINTS = (262, 312, 1300, 1480)          # y0, y1, x0, x1
@@ -61,7 +61,7 @@ def read_panel(f, glyphs, lib):
     if out['glyph_score'] < GLYPH_MIN:
         for key in ('points', 'kills_assists', 'deaths', 'specials'): out[key] = None
     for kind in ('stage', 'mode', 'rule'):
-        sid, label, _ = lib.identify(banner_signature(f, kind), kind, add_unknown=False, thr=BANNER_THR)
+        sid, label, _ = banner_identify(f, kind, lib, add_unknown=False)
         out[kind] = label; out[kind + '_id'] = sid
     sig = weapon_signature(f)
     _, out['weapon'], out['weapon_score'] = lib.identify(sig, 'panel_weapon', add_unknown=False, thr=WEAPON_THR)

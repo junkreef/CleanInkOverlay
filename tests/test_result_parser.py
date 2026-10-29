@@ -27,17 +27,20 @@ def test_a_speck_in_the_banner_is_no_text():
 
 def test_the_stage_name_moves_left_after_a_short_rule_name():
     """'ガチヤグラ' is 2 characters shorter than 'ナワバリバトル' / 'ガチホコバトル', so the stage name after it in the same tag
-    starts 56 px further left; read from there it gives the same signature as after a long rule name"""
+    starts 56 px further left; read from there it gives the same signature as after a long rule name. After 'ガチアサリ'
+    (wider glyphs) it starts 6 px further right again, found by looking the name up over STAGE_SHIFT"""
     import cv2
-    from result_parser import stage_x, BANNER_THR
+    from result_parser import stage_x, banner_identify
     from signatures import Library
     lib = Library()
-    for name, x, stage in (('results/yagura2.png', 1005, 'チョウザメ造船'),          # 2026-10-28_23-06-42.mp4, ガチヤグラ
-                           ('gachi_scoreboard_ko.png', 1061, 'スメーシーワールド'),  # ガチホコバトル
-                           ('0268_result_scoreboard.png', 1061, 'コンブトラック')):  # ナワバリバトル
+    for name, x, rule, stage in (('results/yagura2.png', 1005, 'ガチヤグラ', 'チョウザメ造船'),     # 2026-10-28_23-06-42.mp4
+                                 ('results/asari1.png', 1005, 'ガチアサリ', 'バイガイ亭'),          # 2026-10-29_22-02-57.mp4
+                                 ('gachi_scoreboard_ko.png', 1061, None, 'スメーシーワールド'),     # ガチホコバトル
+                                 ('0268_result_scoreboard.png', 1061, 'ナワバリバトル', 'コンブトラック')):
         f = cv2.imread(os.path.join(ROOT, 'work', 'frames', name))
         assert stage_x(f) == x, name
-        assert lib.identify(banner_signature(f, 'stage'), 'stage', add_unknown=False, thr=BANNER_THR)[1] == stage, name
+        assert banner_identify(f, 'stage', lib, add_unknown=False)[1] == stage, name
+        assert banner_identify(f, 'rule', lib, add_unknown=False)[1] == rule, name
 
 
 def test_rows_of_the_labelled_scoreboards():

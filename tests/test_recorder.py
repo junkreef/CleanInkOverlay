@@ -123,8 +123,9 @@ def test_the_rule_name_tells_the_rules_apart():
 
 def test_a_5_minute_start_goes_ingame_with_its_length():
     store = FakeStore(); rec = R.Recorder(VIDEO, store, dry=True, log=lambda *a: None)
-    rec.start_match(RULE_FRAME, 40.0)                                    # ナワバリ's rule screen, not named: the timer decides
-    assert rec.m['title'] is None and rec.m['analysis'] is None
+    store.sig.label('t_cf10ed6f', None)                                  # ナワバリ's rule screen as an unnamed rule: the timer decides
+    rec.start_match(RULE_FRAME, 40.0)
+    assert rec.m['title_id'] == 't_cf10ed6f' and rec.m['title'] is None and rec.m['analysis'] is None
     f = frame('gachi_hud_yagura_neutral.png')
     for i, rem in enumerate((300, 300, 300, 299)): rec.start_nonturf(f, 58.0 + 0.3 * i, rem, None)
     assert rec.state == 'INGAME' and rec.m['dur'] == 300 and rec.m['nonturf'] and abs(rec.m['t0'] - 57.9) < 1e-6 and len(rec.m['start_patches']) == 1
@@ -138,7 +139,8 @@ def test_hud_of_rules_without_paint_points():
     g = Glyphs()
     assert hud.timer_hud(frame('gachi_hud_yagura_neutral.png'), g) == (True, 209, '3:29') and not hud.hud_visible(frame('gachi_hud_yagura_neutral.png'))
     assert hud.timer_hud(frame('gachi_hud_overtime.png'), g) == (True, None, None) and hud.overtime(frame('gachi_hud_overtime.png'))
-    for n in ('gachi_hud_yagura_ally.png', '0060_ingame_early.png', '0082_map_open.png', '0236_finish.png', '0041_match_start_rule.png'):
+    assert hud.timer_hud(frame('gachi_hud_asari_overtime.png'), g) == (True, None, None)    # アサリ: the box around the letters gone black
+    for n in ('gachi_hud_asari.png', 'gachi_hud_yagura_ally.png', '0060_ingame_early.png', '0082_map_open.png', '0236_finish.png', '0041_match_start_rule.png'):
         assert not hud.overtime(frame(n)), n
     assert hud.timer_hud(frame('0082_map_open.png'), g)[0] is False
 
@@ -170,19 +172,22 @@ def test_a_turf_match_does_not_take_the_timer_box_for_its_hud():
 
 
 def test_the_area_counts():
-    """ガチエリア: 「のこり」 of both boxes as counts (100 - のこり), and whose box is lit (holds every zone, counting down)"""
+    """ガチエリア / ガチアサリ: 「のこり」 of both boxes as counts (100 - のこり), and whose box is lit (holds every zone /
+    attacks, counting down)"""
     import area
     g = Glyphs()
-    want = {'gachi_hud_area_my.png': (23, 0, 'my'), 'gachi_hud_area_enemy.png': (98, 36, 'enemy'), 'gachi_hud_area_one_zone.png': (23, 12, None)}
+    want = {'gachi_hud_area_my.png': (23, 0, 'my'), 'gachi_hud_area_enemy.png': (98, 36, 'enemy'), 'gachi_hud_area_one_zone.png': (23, 12, None),
+            'gachi_hud_asari.png': (32, 0, None)}
     for n, w in want.items():
         r = area.read(frame(n), g)
         assert (r['my_count'], r['enemy_count'], r['holder']) == w, n
         assert area.present(frame(n), g), n
     for n in ('gachi_hud_yagura_neutral.png', 'gachi_hud_hoko_ally.png', 'gachi_hud_overtime.png', '0060_ingame_early.png', '0176_ingame_lastmin.png'):
         assert not area.present(frame(n), g), n
-    assert R.RULE_ANALYSIS['ガチエリア'] == 'zones'
+    assert R.RULE_ANALYSIS['ガチエリア'] == R.RULE_ANALYSIS['ガチアサリ'] == 'zones'
     pens = {n: (r['my_penalty'], r['enemy_penalty']) for n in want for r in [area.read(frame(n), g)]}
-    assert pens == {'gachi_hud_area_my.png': (None, None), 'gachi_hud_area_enemy.png': (56, 23), 'gachi_hud_area_one_zone.png': (None, 10)}
+    assert pens == {'gachi_hud_area_my.png': (None, None), 'gachi_hud_area_enemy.png': (56, 23), 'gachi_hud_area_one_zone.png': (None, 10),
+                    'gachi_hud_asari.png': (10, None)}
 
 
 def test_penalty_series():

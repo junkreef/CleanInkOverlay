@@ -35,7 +35,10 @@ HOLES = {'0': 1, '6': 1, '9': 1, 'p': 1, '8': 2}               # enclosed holes 
 HOLE_SETS = ('big', 'small', 'panel_big', 'panel_small')        # has them. The mean templates alone read small 08 as 06 / 00
                                  # (101 rows of the stored scoreboards, 11 panels) and 06 as 08 (2026-10-29)
 STAGE_SHORT_RULE = 56            # px: the stage name follows the rule name in its tag, so after a 5-character rule (ガチヤグラ;
-                                 # ガチエリア / ガチアサリ presumably) it starts 56 px left of where it does after ナワバリバトル / ガチホコバトル
+                                 # ガチエリア / ガチアサリ: about there, see STAGE_SHIFT) it starts 56 px left of where it does after ナワバリバトル / ガチホコバトル
+STAGE_SHIFT = range(-2, 9)       # px around stage_x where the stage name is looked up: the rule name's width moves it by a few px
+                                 # (after ガチアサリ it starts at 1011, 6 px right of ガチヤグラ's 1005) and 1 px off already drops
+                                 # the signature from 1.0 to ~0.88, 2 px to ~0.64 (2026-10-29_22-02-57: バイガイ亭 read as a new stage)
 
 
 def white_mask(bgr, thr=170):
@@ -119,12 +122,13 @@ def stage_x(f):
     return b['x']
 
 
-def banner_signature(f, kind):
+def banner_signature(f, kind, x=None):
     """kind = 'mode' / 'rule' / 'stage' -> fixed-size float vector (None when there is no text). Every text of a kind
     is laid on the same canvas, so the same text always gives the same vector and different texts differ wherever
-    their glyphs differ; identified with signatures.Library like the medal names."""
-    b = BANNER[kind]; x, y, h, w = b['x'], b['y'], b['h'], b['w']
-    if kind == 'stage': x = stage_x(f)
+    their glyphs differ; identified with signatures.Library like the medal names (banner_identify). x: where the stage
+    name starts (default stage_x)"""
+    b = BANNER[kind]; y, h, w = b['y'], b['h'], b['w']
+    x = (stage_x(f) if x is None else x) if kind == 'stage' else b['x']
     x1 = x + w if b['pad'] is None else min(x + w, tag_end(f, x, b['pad'], x + w + 40) - 3)
     if x1 - x < BANNER_MIN_W: return None                     # no dark tag there (2026-09-12_23-20-07: the band came out -3 px)
     m = banner_text(f[y - 1:y + h + 1, x:x1])
@@ -135,6 +139,18 @@ def banner_signature(f, kind):
     if m.sum() < 20 or not len(cols) or cols[-1] - cols[0] + 1 < BANNER_MIN_W: return None
     canvas = np.zeros((h + 2, w), np.uint8); canvas[:, :m.shape[1]] = m * 255
     return cv2.resize(canvas, None, fx=BANNER_SCALE, fy=BANNER_SCALE, interpolation=cv2.INTER_AREA).astype(np.float32).ravel() / 255
+
+
+def banner_identify(f, kind, lib, add_unknown=True):
+    """(id, label, score) of a banner text in the library. The stage name is looked up at every start in STAGE_SHIFT
+    and the best match counts; a stage name that matches nowhere is added (add_unknown) as read from stage_x"""
+    if kind != 'stage': return lib.identify(banner_signature(f, kind), kind, add_unknown=add_unknown, thr=BANNER_THR)
+    x = stage_x(f); best = (None, None, 0.0)
+    for d in STAGE_SHIFT:
+        r = lib.identify(banner_signature(f, kind, x + d), kind, add_unknown=False, thr=BANNER_THR)
+        if r[0] is not None and r[2] > best[2]: best = r
+    if best[0] is not None or not add_unknown: return best
+    return lib.identify(banner_signature(f, kind, x), kind, thr=BANNER_THR)
 
 
 def row_glyphs(f, y):
@@ -149,7 +165,7 @@ def parse(f, icons, glyphs, lib=None):
     lib = lib or Library()
     res = {'rows': []}
     for key in ('stage', 'mode', 'rule'):
-        sid, label, sc = lib.identify(banner_signature(f, key), key, thr=BANNER_THR)
+        sid, label, sc = banner_identify(f, key, lib)
         res[key] = label; res[key + '_id'] = sid
     for label, y in RESULT_ROWS.items():
         pm, pb, sm, sb = row_glyphs(f, y)

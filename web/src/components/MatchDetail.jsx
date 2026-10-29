@@ -6,11 +6,12 @@ const EVENT_LABEL = { death: 'デス', kill: 'たおした', killed_by: 'やら�
 const sec = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, '0')}`
 
 // ガチルール: one chart for every rule, 0 in the middle, my team upward, the enemy downward. Lines = each team's count
-// (エリア: the counts; ヤグラ / ホコ: how far each team has pushed). Band under a line = what the team has to win back
-// before its count moves again (エリア: the penalty, its lower edge dotted = count - penalty; ヤグラ / ホコ: from the best
+// (エリア / アサリ: the counts; ヤグラ / ホコ: how far each team has pushed). Band under a line = what the team has to win back
+// before its count moves again (エリア / アサリ: the penalty, its lower edge dotted = count - penalty; ヤグラ / ホコ: from the best
 // back to where the objective is now, the white line). Overtime shaded; hover for the values of a second
 const RULE_WORDS = {
   ガチエリア: { debt: 'ペナルティ', floor: '点線 = カウント - ペナルティ', hold: '確保' },
+  ガチアサリ: { debt: 'ペナルティ', floor: '点線 = カウント - ペナルティ', hold: 'ゴール攻め' },
   ガチヤグラ: { debt: '最高到達点との差', floor: '白い線 = ヤグラの位置', hold: '乗車', obj: 'ヤグラ' },
   ガチホコバトル: { debt: '最高到達点との差', floor: '白い線 = ホコの位置', hold: '所持', obj: 'ホコ' },
 }

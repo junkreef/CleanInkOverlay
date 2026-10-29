@@ -16,7 +16,7 @@ from sqlalchemy import select
 from app.store import Store
 from app.db.models import Match, Medal
 from signatures import Library
-from result_parser import banner_signature, BANNER_THR
+from result_parser import banner_identify
 from medals import parse_medals
 
 
@@ -30,7 +30,7 @@ def rebuild(apply=False):
             raw = json.loads(m.raw_json) if m.raw_json else None
             if m.result_image and raw is not None and (f := cv2.imread(os.path.join(st.root, m.result_image))) is not None:
                 for kind in ('stage', 'mode', 'rule'):
-                    sid, label, _ = lib.identify(banner_signature(f, kind), kind, thr=BANNER_THR)
+                    sid, label, _ = banner_identify(f, kind, lib)
                     known = getattr(m, kind)
                     if sid and known and not label: lib.label(sid, known); label = known
                     elif known and label and known != label: log['conflicts'].append((m.id, kind, known, label))

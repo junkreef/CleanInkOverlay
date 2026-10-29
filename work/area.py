@@ -1,4 +1,4 @@
-"""ガチエリア: the two count boxes under the HUD timer (1080p), read once per second by the recorder.
+"""ガチエリア / ガチアサリ: the two count boxes under the HUD timer (1080p), read once per second by the recorder.
 
 Left = my team, right = the enemy, each 「のこり N」 (the count still to go, 100 at the start). The box of the team that
 holds the area(s) and is counting down is filled with its colour, white digits; otherwise it is black with digits in the
@@ -10,6 +10,12 @@ of what it counted during its hold, paid penalty included: 97 -> +74, 36 -> +28,
 that team holds every zone again, the penalty goes down first and 「のこり」 stays; the pill stays while nobody pays.
 
 Counts are given like the judge screen's 「N カウント」: how far a team has got, 100 - のこり.
+
+ガチアサリ has the same boxes, digits and 「+N」 pills (checked on 2026-10-29_22-02-57.mp4, 2 matches): the box is lit
+while the team's attack is on (it broke the other goal's barrier; a pie timer between the boxes counts the attack down),
+and the pill shows up when that attack ends with counts made (23 -> +11, 54 -> +16) and is paid first on the next one.
+Between the boxes one ⚓ (the goal) instead of the zone icons. So the same reader serves both rules: 'holder' is the
+team whose attack is on.
 """
 import cv2, numpy as np
 from result_parser import glyph_boxes
