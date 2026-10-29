@@ -27,3 +27,14 @@ def test_a_bad_setting_stops_with_a_message(tmp_path, text):
 
 def test_the_example_file_holds_the_defaults():
     assert config.load(os.path.join(ROOT, 'config.example.toml')) == config.DEFAULTS
+
+
+def test_adobe_fonts_kit_defaults_to_none_and_checks_the_id(tmp_path):
+    p = tmp_path / 'config.toml'
+    assert config.adobe_fonts_kit(str(p)) == ''
+    p.write_text('[overlay]\nadobe_fonts_kit = "abc1def"\n', encoding='utf-8')
+    assert config.adobe_fonts_kit(str(p)) == 'abc1def'
+    for bad in ['"abc def"', '"x\\"><script>"', '1']:
+        p.write_text(f'[overlay]\nadobe_fonts_kit = {bad}\n', encoding='utf-8')
+        with pytest.raises(SystemExit):
+            config.adobe_fonts_kit(str(p))

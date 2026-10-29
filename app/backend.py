@@ -33,7 +33,7 @@ recorder running elsewhere, from a 1 s watch on the newest match id.
 import argparse, asyncio, os, sys, json, time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -256,7 +256,9 @@ def api_overlay_session(body: SessionStart):
 @app.get('/overlay')
 def overlay_page():
     if not os.path.exists(OVERLAY_HTML): raise HTTPException(404, 'web/overlay.html is missing')
-    return FileResponse(OVERLAY_HTML, media_type='text/html')
+    with open(OVERLAY_HTML, encoding='utf-8') as fh: html = fh.read()
+    html = html.replace('<meta name="adobe-fonts-kit" content="">', f'<meta name="adobe-fonts-kit" content="{config.adobe_fonts_kit()}">', 1)
+    return HTMLResponse(html)
 
 
 @app.get('/files/{path:path}')

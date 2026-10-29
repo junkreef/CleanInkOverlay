@@ -5,3 +5,9 @@
 # Screen PNGs (samples/matches) and bubble / miss evidence JPGs older than this many days are deleted when the
 # backend starts. Screens still needed to name an unknown stage / medal are kept regardless.
 keep_days = 7
+
+[overlay]
+# Adobe Fonts web project ID (kitId in its embed code) for the numbers on /overlay. The project must contain
+# CC That's All Folks (CSS name cc-thats-all-folks); the fonts are licensed to your own Creative Cloud subscription,
+# so each installation uses its own project. Empty: no Adobe Fonts, the numbers use Rubik Black from Google Fonts.
+adobe_fonts_kit = ""
