@@ -137,9 +137,10 @@ def api_delete_match(mid: int):
 
 
 @app.get('/api/stats')
-def api_stats(since: str | None = None, mode: str | None = None):
-    """since: omitted / 'all' = every match, else as the overlay's (ISO time, 'today', 'session', 'Nd')"""
-    return store().stats(None if since in (None, '', 'all') else resolve_since(since), mode or None)
+def api_stats(since: str | None = None, mode: str | None = None, rule: str | None = None):
+    """since: omitted / 'all' = every match, else as the overlay's (ISO time, 'today', 'session', 'Nd');
+    rule: a rule name, or '@gachi' for every ガチ rule"""
+    return store().stats(None if since in (None, '', 'all') else resolve_since(since), mode or None, rule or None)
 
 
 @app.get('/api/signatures/unlabelled')

@@ -1,6 +1,6 @@
 """Reusable SELECTs built on the models: the stat tables the web shows (formerly SQLite views), and the
 per-match row with the player's own line. Everything returns dicts (column order = table column order)."""
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import aliased
 from .models import Event, Match, MatchPlayer, Medal
 
@@ -23,24 +23,40 @@ def rows(session, stmt):
 def match_row(*extra):
     """the list / overlay columns of a match + my row"""
     return (select(Match.id, Match.started_at, Match.mode, Match.rule, Match.stage, Match.result, Match.my_pct, Match.enemy_pct,
-                   Match.duration_s, Match.source, Match.notes,
+                   Match.my_count, Match.enemy_count, Match.knockout, Match.duration_s, Match.source, Match.notes,
                    MY.weapon, MY.points, MY.kills_assists, MY.deaths, MY.specials, *extra)
             .select_from(Match).outerjoin(MY, MY_JOIN))
 
 
-def match_filter(M=Match, since=None, mode=None):
-    """WHERE conditions narrowing the stats to some matches: started at/after `since` (ISO local time), of one `mode`"""
+GACHI = '@gachi'          # the `rule` filter value for every non-turf match
+
+
+def is_gachi(M=Match):
+    """a ガチ match: counts were read, or the rule is labelled ガチ… (so a match whose rule screen has no label yet counts too)"""
+    return or_(M.my_count.is_not(None), M.rule.like('ガチ%'))
+
+
+def match_filter(M=Match, since=None, mode=None, rule=None):
+    """WHERE conditions narrowing the stats to some matches: started at/after `since` (ISO local time), of one `mode`,
+    of one `rule` (GACHI = every ガチ rule)"""
     conds = []
     if since: conds.append(M.started_at >= since)
     if mode: conds.append(M.mode == mode)
+    if rule: conds.append(is_gachi(M) if rule == GACHI else M.rule == rule)
     return conds
 
 
-def my_matches(since=None, mode=None):
+def my_matches(since=None, mode=None, rule=None):
     """what the stat tables aggregate over: one row per match with my weapon / stats (matches without my row are skipped)"""
     return (select(Match.id, Match.started_at, Match.stage, Match.mode, Match.rule, Match.result, Match.my_pct, Match.enemy_pct,
+                   Match.my_count, Match.enemy_count, Match.knockout,
                    MY.weapon, MY.points, MY.kills_assists, MY.deaths, MY.specials)
-            .select_from(Match).join(MY, MY_JOIN).where(*match_filter(Match, since, mode))).subquery('my_matches')
+            .select_from(Match).join(MY, MY_JOIN).where(*match_filter(Match, since, mode, rule))).subquery('my_matches')
+
+
+def ko(m, result):
+    """ノックアウト wins / losses; NULL over matches without counts (a turf-only selection gives NULL, not 0)"""
+    return func.sum(case((m.c.my_count.is_(None), None), ((m.c.knockout == 1) & (m.c.result == result), 1), else_=0))
 
 
 def overview(**f):
@@ -51,7 +67,9 @@ def overview(**f):
                   func.round(func.avg(m.c.kills_assists), 2).label('avg_ka'), func.round(func.avg(m.c.deaths), 2).label('avg_d'),
                   func.round(func.avg(m.c.specials), 2).label('avg_sp'), func.round(func.avg(m.c.points)).label('avg_points'),
                   func.round(func.avg(m.c.my_pct), 1).label('avg_pct'),
-                  func.sum(m.c.kills_assists).label('sum_ka'), func.sum(m.c.deaths).label('sum_d'))
+                  func.sum(m.c.kills_assists).label('sum_ka'), func.sum(m.c.deaths).label('sum_d'),
+                  func.count(m.c.my_count).label('count_games'), ko(m, 'win').label('ko_wins'), ko(m, 'lose').label('ko_losses'),
+                  func.round(func.avg(m.c.my_count), 1).label('avg_my_count'), func.round(func.avg(m.c.enemy_count), 1).label('avg_enemy_count'))
 
 
 def recent_results(limit=20, **f):
@@ -77,6 +95,16 @@ def weapon_stats(**f):
                    func.round(func.avg(m.c.kills_assists), 2).label('avg_ka'), func.round(func.avg(m.c.deaths), 2).label('avg_d'),
                    func.round(func.avg(m.c.specials), 2).label('avg_sp'), func.round(func.avg(m.c.points)).label('avg_points'))
             .group_by(m.c.weapon).order_by(func.count().desc()))
+
+
+def rule_stats(**f):
+    """ルール別 (a match without a rule label = None)"""
+    m = my_matches(**f)
+    return (select(m.c.rule, func.count().label('games'), wins(m.c.result).label('wins'), win_pct(m.c.result).label('win_pct'),
+                   ko(m, 'win').label('ko_wins'), ko(m, 'lose').label('ko_losses'),
+                   func.round(func.avg(m.c.kills_assists), 2).label('avg_ka'), func.round(func.avg(m.c.deaths), 2).label('avg_d'),
+                   func.round(func.avg(m.c.specials), 2).label('avg_sp'), func.round(func.avg(m.c.points)).label('avg_points'))
+            .group_by(m.c.rule).order_by(func.count().desc()))
 
 
 def stage_stats(**f):
@@ -120,13 +148,13 @@ def my_timeline(**f):
             .group_by(from_s, Event.type).order_by(from_s, Event.type))
 
 
-STATS = {'overview': overview, 'weapon_stats': weapon_stats, 'stage_stats': stage_stats, 'enemy_weapon_stats': enemy_weapon_stats,
+STATS = {'overview': overview, 'weapon_stats': weapon_stats, 'rule_stats': rule_stats, 'stage_stats': stage_stats, 'enemy_weapon_stats': enemy_weapon_stats,
          'medal_stats': medal_stats, 'my_timeline': my_timeline, 'daily_stats': daily_stats}
 
 
-def stats(session, since=None, mode=None):
-    """every stat table, optionally only over matches started at/after `since` (ISO local time) / of one `mode`"""
-    return {name: rows(session, build(since=since, mode=mode)) for name, build in STATS.items()}
+def stats(session, since=None, mode=None, rule=None):
+    """every stat table, optionally only over matches started at/after `since` (ISO local time) / of one `mode` / `rule`"""
+    return {name: rows(session, build(since=since, mode=mode, rule=rule)) for name, build in STATS.items()}
 
 
 def killed_by_weapons(since=None, limit=3):

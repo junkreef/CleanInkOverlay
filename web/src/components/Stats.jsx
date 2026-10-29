@@ -69,6 +69,7 @@ const GAMES = [{ key: 'games', label: '試合', num: true, bar: 'max' }, { key: 
 const AVGS = [{ key: 'avg_ka', label: '平均 k+a', num: true, digits: 2 }, { key: 'avg_d', label: '平均 d', num: true, digits: 2 },
   { key: 'avg_sp', label: '平均 sp', num: true, digits: 2 }, { key: 'avg_points', label: '平均 p', num: true }]
 const signed = (v) => v > 0 ? `+${v}` : String(v)
+const GACHI = '@gachi'   // the rule filter value for every ガチ rule (app/db/queries.GACHI)
 
 function Panel({ title, note, wide, tools, children }) {
   return (
@@ -183,10 +184,10 @@ function EnemyWeapons({ rows }) {
 }
 
 export default function Stats() {
-  const [filter, setFilter] = useState(() => ({ since: 'all', mode: '', ...loadFilter() }))
+  const [filter, setFilter] = useState(() => ({ since: 'all', mode: '', rule: '', ...loadFilter() }))
   const [s, setS] = useState(null)
   const [err, setErr] = useState(null)
-  const query = `/api/stats?since=${encodeURIComponent(filter.since)}&mode=${encodeURIComponent(filter.mode)}`
+  const query = `/api/stats?since=${encodeURIComponent(filter.since)}&mode=${encodeURIComponent(filter.mode)}&rule=${encodeURIComponent(filter.rule)}`
   const load = () => api(query).then((d) => { setS(d); setErr(null) }).catch((e) => setErr(String(e)))
   useEffect(() => { load(); saveFilter(filter) }, [query])
   useEffect(() => subscribe((m) => { if (m.type === 'match_saved' || m.type === 'match_deleted') load() }), [query])
@@ -217,6 +218,11 @@ export default function Stats() {
           <option value="">すべて</option>
           {(s.modes || []).map((m) => <option key={m} value={m}>{m}</option>)}
         </select></label>
+        <label>ルール <select value={filter.rule} onChange={(e) => set('rule', e.target.value)}>
+          <option value="">すべて</option>
+          <option value={GACHI}>ガチ全部</option>
+          {(s.rules || []).map((r) => <option key={r} value={r}>{r}</option>)}
+        </select></label>
         {err && <span className="error">{err}</span>}
       </div>
 
@@ -230,12 +236,21 @@ export default function Stats() {
         <Kpi label="平均 sp" value={num(o.avg_sp, 2)} />
         <Kpi label="平均 p" value={num(o.avg_points)} />
         <Kpi label="平均 塗り" value={o.avg_pct == null ? '-' : `${o.avg_pct}%`} />
+        {o.count_games > 0 && <>
+          <Kpi label="KO 勝ち / 負け" value={<>{o.ko_wins} <span className="kpi-of">/ {o.ko_losses}</span></>} cls={o.ko_wins > o.ko_losses ? 'good' : o.ko_wins < o.ko_losses ? 'bad' : ''}
+               sub={`カウントのある ${o.count_games} 試合`} />
+          <Kpi label="平均カウント差" value={signed(Math.round(10 * (o.avg_my_count - o.avg_enemy_count)) / 10)} cls={o.avg_my_count >= o.avg_enemy_count ? 'good' : 'bad'}
+               sub={`自 ${o.avg_my_count} / 敵 ${o.avg_enemy_count}`} />
+        </>}
       </div>
 
       {s.recent?.length > 0 && <Panel title="直近の結果" note={`${s.recent.length} 試合、右が最新`} wide><Form recent={s.recent} /></Panel>}
 
       <div className="grid">
         <StatCard title="日別" rows={s.daily_stats || []} sort={{ key: 'day', dir: -1 }} cols={[{ key: 'day', label: '日付' }, ...GAMES, ...AVGS]} />
+        <StatCard title="ルール別" note="KO はノックアウト" rows={s.rule_stats || []} sort={{ key: 'games', dir: -1 }} cols={[
+          { key: 'rule', label: 'ルール' }, ...GAMES, { key: 'ko_wins', label: 'KO 勝', num: true }, { key: 'ko_losses', label: 'KO 負', num: true }, ...AVGS.filter((c) => c.key !== 'avg_sp'),
+        ]} />
         <StatCard title="ステージ別" note="5 試合未満は薄く表示" rows={s.stage_stats} sort={{ key: 'games', dir: -1 }} dim={(r) => r.games < 5}
                   cols={[{ key: 'stage', label: 'ステージ' }, ...GAMES, ...AVGS.filter((c) => c.key !== 'avg_sp')]} />
         <StatCard title="自分のブキ別" rows={s.weapon_stats} sort={{ key: 'games', dir: -1 }} cols={[{ key: 'weapon', label: 'ブキ' }, ...GAMES, ...AVGS]} />

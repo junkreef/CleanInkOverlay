@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { api, del } from '../api.js'
+import { Score } from './Score.jsx'
 
 const EVENT_LABEL = { death: 'デス', kill: 'たおした', killed_by: 'やられた', special: 'スペシャル' }
 const sec = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, '0')}`
@@ -25,7 +26,7 @@ export default function MatchDetail({ id }) {
       <p><a href="#/matches">← 一覧</a></p>
       <h2>
         試合 #{m.id} <span className={`result ${m.result}`}>{m.result === 'win' ? 'WIN' : m.result === 'lose' ? 'LOSE' : '?'}</span>
-        <small> {m.started_at?.replace('T', ' ')} / {m.rule || '-'} / {m.stage || '未ラベル'} / {m.my_pct != null ? `${m.my_pct}% - ${m.enemy_pct}%` : ''} / {m.duration_s ? `${m.duration_s}s` : ''}</small>
+        <small> {m.started_at?.replace('T', ' ')} / {m.rule || '-'} / {m.stage || '未ラベル'} / <Score m={m} long /> / {m.duration_s ? `${m.duration_s}s` : ''}</small>
       </h2>
       {m.notes && <p className="warn">⚠ {m.notes}</p>}
 

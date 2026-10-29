@@ -116,6 +116,29 @@ def test_store_roundtrip_and_stats(tmp_path):
     con.close(); s.close()
 
 
+def test_gachi_counts_knockouts_and_the_rule_filter(tmp_path):
+    s = Store(db_path=str(tmp_path / 'gachi.db'))
+    s.insert_match(*sample_match())                                                     # ナワバリ, win
+    for started, rule, result, mc, ec, ko in (('2026-09-16T21:00:00', 'ガチヤグラ', 'win', 100, 0, 1), ('2026-09-16T21:10:00', 'ガチヤグラ', 'lose', 62, 90, 0),
+                                               ('2026-09-16T21:20:00', None, 'lose', 0, 100, 1)):   # the last: rule screen not labelled yet
+        match, players, *rest = sample_match(started, result)
+        match.update(mode='バンカラマッチ(チャレンジ)', rule=rule, my_pct=None, enemy_pct=None, my_count=mc, enemy_count=ec, knockout=ko)
+        s.insert_match(match, players, *rest)
+
+    assert [(m['my_count'], m['enemy_count'], m['knockout']) for m in s.list_matches()] == [(0, 100, 1), (62, 90, 0), (100, 0, 1), (None, None, None)]
+    assert s.overlay(None)['last']['knockout'] == 1
+
+    o = s.stats()['overview'][0]
+    assert (o['games'], o['count_games'], o['ko_wins'], o['ko_losses'], o['avg_my_count'], o['avg_enemy_count']) == (4, 3, 1, 1, 54.0, 63.3)
+    g = s.stats(rule='@gachi')
+    assert g['overview'][0]['games'] == 3 and [r['result'] for r in g['recent']] == ['lose', 'lose', 'win']
+    assert s.stats(rule='ガチヤグラ')['overview'][0]['games'] == 2 and s.stats(rule='ナワバリバトル')['overview'][0]['ko_wins'] is None
+    assert s.stats()['rules'] == ['ガチヤグラ', 'ナワバリバトル']
+    assert {r['rule']: (r['games'], r['wins'], r['ko_wins'], r['ko_losses']) for r in s.stats()['rule_stats']} == {
+        'ガチヤグラ': (2, 1, 1, 0), None: (1, 0, 0, 1), 'ナワバリバトル': (1, 1, None, None)}
+    s.close()
+
+
 def test_check_constraints_are_enforced(tmp_path):
     s = Store(db_path=str(tmp_path / 'chk.db'))
     match, players, events, medals, timeline = sample_match()

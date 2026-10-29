@@ -87,3 +87,8 @@ table.stat tr.blank td { border-bottom-color: transparent; }
 .heat-cell b { font-size: 16px; } .heat-cell small { font-size: 11px; color: var(--fg); opacity: .75; }
 .heat-cell:hover { outline: 2px solid var(--fg); outline-offset: -2px; }
 .heat-empty { flex: 1; }
+/* rule tag and score (ナワバリ %, ガチ counts + KO) in the match list / detail */
+.rule-tag { display: inline-block; padding: 0 6px; border-radius: 4px; font-size: 12px; } .rule-tag.turf { background: #2fd27a33; } .rule-tag.gachi { background: #f5d13b33; }
+.score .ko { display: inline-block; padding: 0 5px; margin-left: 5px; border-radius: 4px; background: var(--lose); color: #000; font-size: 11px; font-weight: 700; }
+h2 small .score { color: var(--fg); font-weight: 600; }
+.kpi-of { font-size: 16px; color: var(--muted); }

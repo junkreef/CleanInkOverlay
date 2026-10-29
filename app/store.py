@@ -194,13 +194,14 @@ class Store:
             out['medals'] = [d.to_dict() for d in m.medals]
         return out
 
-    def stats(self, since=None, mode=None):
-        """the stat tables (optionally only matches started at/after `since` / of one `mode`), my newest results,
-        and the modes there are to pick from"""
+    def stats(self, since=None, mode=None, rule=None):
+        """the stat tables (optionally only matches started at/after `since` / of one `mode` / `rule`, queries.GACHI = every
+        ガチ rule), my newest results, and the modes / rules there are to pick from"""
         with self.Session() as s:
-            out = queries.stats(s, since, mode)
-            out['recent'] = queries.rows(s, queries.recent_results(since=since, mode=mode))
+            out = queries.stats(s, since, mode, rule)
+            out['recent'] = queries.rows(s, queries.recent_results(since=since, mode=mode, rule=rule))
             out['modes'] = list(s.scalars(select(Match.mode).where(Match.mode.is_not(None)).distinct().order_by(Match.mode)))
+            out['rules'] = list(s.scalars(select(Match.rule).where(Match.rule.is_not(None)).distinct().order_by(Match.rule)))
         return out
 
     def overlay(self, since=None, limit=8):
