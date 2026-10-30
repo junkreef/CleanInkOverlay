@@ -13,7 +13,7 @@ true 0.74-0.97, runner-up <= 0.66). Dead players show a grey silhouette + X inst
 """
 import cv2, numpy as np, os, sys, json
 sys.path.insert(0, os.path.dirname(__file__))
-from result_parser import glyph_boxes, merge_boxes, norm_glyph, GLYPH_DIR   # glyph sets: timer (build_timer_glyphs), points (HUD paint points, labelled by hand from clustered glyphs)
+from result_parser import glyph_boxes, merge_boxes, norm_glyph, white_mask, bright_mask, dark_share, GLYPH_DIR   # glyph sets: timer (build_timer_glyphs), points (HUD paint points, labelled by hand from clustered glyphs)
 
 SLOT_X = [(527, 597), (622, 692), (711, 781), (799, 869), (1057, 1127), (1145, 1215), (1233, 1303), (1320, 1390)]
 SLOT_Y = (38, 112)
@@ -32,7 +32,7 @@ def crop(f, r):
 # ---------------------------------------------------------------- timer
 def timer_mask(f):
     """digits are white, and yellow-green under 1:00, on a black box: bright = any channel > 170"""
-    return (crop(f, TIMER).max(axis=2) > 170).astype(np.uint8)
+    return bright_mask(crop(f, TIMER), 170)
 
 
 def timer_glyphs(f):
@@ -40,8 +40,18 @@ def timer_glyphs(f):
     return m, merge_boxes(glyph_boxes(m, 15, 50))
 
 
+_last_timer = [None, None, None]   # frame, glyphs, result of the last read_timer
+
+
 def read_timer(f, glyphs):
-    """-> (remaining seconds, 'M:SS', min glyph score) or (None, None, 0) when the box does not read as M:SS"""
+    """-> (remaining seconds, 'M:SS', min glyph score) or (None, None, 0) when the box does not read as M:SS.
+    The same frame is read once: on a ガチ frame the recorder asks timer_hud and then sample() for it"""
+    if _last_timer[0] is f and _last_timer[1] is glyphs: return _last_timer[2]
+    r = _read_timer(f, glyphs); _last_timer[:] = f, glyphs, r
+    return r
+
+
+def _read_timer(f, glyphs):
     m, boxes = timer_glyphs(f)
     if len(boxes) != 3 or 'timer' not in glyphs.sets:
         return None, None, 0.0
@@ -66,7 +76,7 @@ def overtime(f):
         cv2.floodFill(pad, None, (0, 0), 2)                   # outside the letters
         _overtime_tpl = tpl.astype(np.float32), (pad[1:-1, 1:-1] != 2).astype(np.float32)
     tpl, letters = _overtime_tpl
-    m = ((crop(f, OVERTIME).max(axis=2) < 70) * 255).astype(np.float32)
+    m = cv2.inRange(crop(f, OVERTIME), (0, 0, 0), (69, 69, 69)).astype(np.float32)   # dark: brightest channel < 70
     r = cv2.matchTemplate(m, tpl, cv2.TM_CCOEFF_NORMED, mask=letters)
     return float(np.nan_to_num(r, nan=0.0, posinf=0.0, neginf=0.0).max()) >= OVERTIME_THR
 
@@ -82,7 +92,7 @@ def timer_hud(f, glyphs):
 
 def hud_visible(f):
     tv = cv2.cvtColor(crop(f, TIMER), cv2.COLOR_BGR2HSV)[..., 2]
-    pts = (crop(f, POINTS).min(axis=2) > 200).mean()
+    pts = white_mask(crop(f, POINTS), 200).mean()
     return 0.55 < (tv < 60).mean() < 0.9 and 0.1 < pts < 0.5
 
 
@@ -92,10 +102,17 @@ def slot_img(f, i, pad=0):
     return f[SLOT_Y[0] - pad:SLOT_Y[1] + pad, x0 - pad:x1 + pad]
 
 
-def slot_state(f, i):
+def slot_state(f, i, hsv=None):
     """-> dict(dark=fraction of low-sat dark px (dead icon), white=fraction of low-sat bright px (special flash))"""
-    hsv = cv2.cvtColor(slot_img(f, i), cv2.COLOR_BGR2HSV); S = hsv[..., 1]; V = hsv[..., 2]; low = S < 50
+    if hsv is None: hsv = cv2.cvtColor(slot_img(f, i), cv2.COLOR_BGR2HSV)
+    S = hsv[..., 1]; V = hsv[..., 2]; low = S < 50
     return dict(dark=float((low & (V < 120)).mean()), white=float((low & (V >= 205)).mean()))
+
+
+def slot_states(f):
+    """slot_state of all 8 slots from one HSV conversion of the slot strip (per pixel, so the same values)"""
+    x0 = SLOT_X[0][0]; hsv = cv2.cvtColor(f[SLOT_Y[0]:SLOT_Y[1], x0:SLOT_X[-1][1]], cv2.COLOR_BGR2HSV)
+    return [slot_state(f, i, hsv[:, a - x0:b - x0]) for i, (a, b) in enumerate(SLOT_X)]
 
 
 # ---------------------------------------------------------------- weapon icon linking
@@ -263,7 +280,7 @@ PTS_TEXT = (45, 120, 1490, 1700)       # 'NNNNp' own paint points: 4 digit boxes
 def read_points(f, glyphs, min_score=0.8):
     """-> (points, min glyph score) or (None, score). The digits roll like an odometer while the count rises: a rolling
     digit is cut / shifted, so the read is only taken when exactly 4 full-height digits are present and all match well."""
-    m = (crop(f, PTS_TEXT).min(axis=2) > 200).astype(np.uint8)
+    m = white_mask(crop(f, PTS_TEXT), 200)
     boxes = [b for b in glyph_boxes(m, 46, 56) if 15 <= b[1] <= 25]
     if len(boxes) != 4 or 'points' not in glyphs.sets: return None, 0.0
     txt, sc = glyphs.read(m, boxes, 'points')

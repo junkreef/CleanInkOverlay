@@ -64,3 +64,22 @@ def test_a_panel_8_is_no_6():
     f = cv2.imread(os.path.join(ROOT, 'work', 'frames', 'panel_kills_08.png'))
     g = Glyphs()
     assert [g.read(m, b, which)[0] for (m, b), which in zip(panel.parts(f), ('panel_big',) + ('panel_small',) * 3)] == ['1532p', '08', '03', '04']
+
+
+def test_glyph_scores_are_pearson_correlations():
+    """Glyphs.read scores every template with one matrix product: the same character and score as np.corrcoef
+    against each template, on random glyph-like masks of every glyph set (holes filter included)"""
+    import cv2
+    from result_parser import Glyphs, glyph_boxes, norm_glyph, holes, HOLES, HOLE_SETS
+    g = Glyphs(); rng = np.random.default_rng(0)
+    for which, tpl in g.sets.items():
+        for _ in range(20):
+            m = np.zeros((40, 30), np.uint8); m[4:36, 4:26] = (rng.random((32, 22)) > 0.4)
+            m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+            boxes = [max(glyph_boxes(m, 1, 40, 1), key=lambda b: b[2] * b[3])]
+            text, sc = g.read(m, boxes, which)
+            v = norm_glyph(m, boxes[0]).ravel(); cands = tpl
+            if which in HOLE_SETS: cands = {ch: t for ch, t in tpl.items() if HOLES.get(ch, 0) == holes(m, boxes[0])} or tpl
+            ref = {ch: float(np.corrcoef(v, t.ravel())[0, 1]) for ch, t in cands.items()}
+            best = max(ref, key=ref.get)
+            assert text == best and abs(sc[0] - round(ref[best], 2)) < 1e-9, (which, text, best)

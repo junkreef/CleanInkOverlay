@@ -11,12 +11,13 @@ from live_capture import find_device
 
 
 def looks_like_result(f):
-    """dark result panel with 8 dark player rows and a bright header bar"""
-    panel = f[300:1000, 800:1850]
-    if dark_share(panel, 40) < 0.3:
+    """dark result panel with 8 dark player rows and a bright header bar. The small row boxes are checked first: any
+    frame of a match fails there, before the whole panel (1 ms) is looked at"""
+    if any(dark_share(f[y - 15:y + 55, 1040:1130], 40) <= 0.3 for y in RESULT_ROWS.values()):
         return False
-    rows = [dark_share(f[y - 15:y + 55, 1040:1130], 40) for y in RESULT_ROWS.values()]
-    return min(rows) > 0.3 and (f[235:285, 925:1710].max(axis=2) > 120).mean() > 0.3
+    if dark_share(f[300:1000, 800:1850], 40) < 0.3:
+        return False
+    return (f[235:285, 925:1710].max(axis=2) > 120).mean() > 0.3
 
 
 def main():

@@ -69,10 +69,11 @@ def run_live(store, device=None, minutes=None, dry=False, debug=False, log=print
     t_end = time.time() + minutes * 60 if minutes else None; nxt = time.time(); n = 0
     try:
         while not (stop and stop.is_set()) and (t_end is None or time.time() < t_end):
-            ok, f = cap.read()
-            if not ok: time.sleep(0.05); continue
+            if not cap.grab(): time.sleep(0.05); continue
             now = time.time()
-            if now < nxt: continue
+            if now < nxt: continue                            # 60 fps in, ~10 analysed: only those are copied out as an image
+            ok, f = cap.retrieve()
+            if not ok: continue
             nxt += 0.1; n += 1
             rec.process(f, now)
             if n % 600 == 0: log(f'... {rec.state} {time.strftime("%H:%M:%S")}')

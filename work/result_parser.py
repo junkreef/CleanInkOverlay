@@ -42,7 +42,13 @@ STAGE_SHIFT = range(-2, 9)       # px around stage_x where the stage name is loo
 
 
 def white_mask(bgr, thr=170):
-    return (bgr.min(axis=2) > thr).astype(np.uint8)
+    """1 where every channel is above thr: the same as (bgr.min(axis=2) > thr).astype(np.uint8), ~10x faster"""
+    return cv2.inRange(bgr, (int(thr) + 1,) * 3, (255,) * 3) & 1
+
+
+def bright_mask(bgr, thr):
+    """1 where any channel is above thr: the same as (bgr.max(axis=2) > thr).astype(np.uint8)"""
+    return (cv2.inRange(bgr, (0, 0, 0), (int(thr),) * 3) == 0).astype(np.uint8)
 
 
 def dark_share(bgr, below):
@@ -90,17 +96,28 @@ class Glyphs:
         for p in glob.glob(os.path.join(path, '*.json')):     # big / small / pct (result screen), timer (HUD)
             d = json.load(open(p, encoding='utf-8'))
             self.sets[os.path.basename(p)[:-5]] = {k: np.array(v, np.float32) for k, v in d.items()}
+        self._z = {}
+
+    def zset(self, which):
+        """(characters, their templates as rows, mean-free and of unit length): a glyph's Pearson correlation with
+        every template is then one matrix product (np.corrcoef per template took ~3 ms per HUD timer read)"""
+        tpl = self.sets[which]
+        if which not in self._z or self._z[which][0] is not tpl:
+            T = np.array([t.ravel() for t in tpl.values()], np.float64); T -= T.mean(axis=1, keepdims=True)
+            self._z[which] = tpl, list(tpl), T / np.linalg.norm(T, axis=1, keepdims=True)
+        return self._z[which][1:]
 
     def read(self, mask, boxes, which):
-        tpl = self.sets[which]  # the % bar uses a heavier font than the rows, so it has its own set
+        chars, T = self.zset(which)  # the % bar uses a heavier font than the rows, so it has its own set
         out = ''; scores = []
         for b in boxes:
-            g = norm_glyph(mask, b).ravel()
-            cands = tpl
+            g = norm_glyph(mask, b).ravel().astype(np.float64); g -= g.mean()
+            idx = range(len(chars))
             if which in HOLE_SETS:                             # only the characters with as many holes, if any
-                n = holes(mask, b); cands = {ch: t for ch, t in tpl.items() if HOLES.get(ch, 0) == n} or tpl
-            sc = {ch: float(np.corrcoef(g, t.ravel())[0, 1]) for ch, t in cands.items()}
-            ch = max(sc, key=sc.get); out += ch; scores.append(round(sc[ch], 2))
+                n = holes(mask, b); idx = [i for i, ch in enumerate(chars) if HOLES.get(ch, 0) == n] or idx
+            with np.errstate(invalid='ignore', divide='ignore'):   # a flat glyph: nan, like np.corrcoef
+                sc = np.clip(T[idx] @ g / np.linalg.norm(g), -1, 1)
+            i = int(np.argmax(sc)); out += chars[idx[i]]; scores.append(round(float(sc[i]), 2))
         return out, scores
 
 

@@ -32,7 +32,7 @@ read the objective's track once per second (work/objective.py: position, who hol
 import argparse, json, os, sys, time, datetime, collections, math
 import cv2, numpy as np
 sys.path.insert(0, os.path.dirname(__file__))
-from result_parser import parse, Glyphs, RESULT_ROWS, NAME, WEAPON, crop as rcrop, white_mask
+from result_parser import parse, Glyphs, RESULT_ROWS, NAME, WEAPON, crop as rcrop, white_mask, dark_share
 from signatures import signature, Library
 from weapon_match import load_main_weapons, load_wiki_icons, icon_source, imread_u, fit_group
 from weapon_icons import harvestable, lossless, group_name, HARVEST_MIN_SCORE
@@ -62,6 +62,7 @@ BUB_CARD_K = 0.5                  # both sides matched at half size: ~14 ms per 
 BUB_KILLER = 0.5                  # best card score that names the killer (correct ~0.94, wrong <= 0.30)
 BUB_EVIDENCE_BELOW = 1.01         # save the best card crop + frame of bubbles scoring below this (samples/bubbles/); every bubble for now, 0.8 once live positives are collected
 RING_SECONDS = 15                 # small frames kept for evidence when an own death shows no bubble
+RING_STEP = 0.5                   # s between them (the miss sheet shows one every 0.5 s; shrinking every sample took 1.6 ms of it)
 STABLE = {'rule': 3, 'medals': 3, 'result': 10, 'schedule': 3}   # 'schedule': the notice shows ~0.9 s
 JUDGE_LABEL_MIN = 0.9             # label score that counts as a win / lose vote (the real labels score >= 0.98)
 COUNT_FIELDS = ('my_count', 'enemy_count', 'knockout', 'my_team_points', 'enemy_team_points')   # ガチルール: matches columns from work/counts.py
@@ -75,7 +76,9 @@ END_GRACE = 15.0                  # s without HUD after 0:00 / overtime before a
 
 
 def tm(bgr, tpl):
-    return float(cv2.matchTemplate(white_mask(bgr, 190) * 255, tpl, cv2.TM_CCOEFF_NORMED).max())
+    m = white_mask(bgr, 190)
+    if not cv2.countNonZero(m): return 0.0                  # what TM_CCOEFF_NORMED gives on a flat image anyway, without the 0.6 ms
+    return float(cv2.matchTemplate(m * 255, tpl, cv2.TM_CCOEFF_NORMED).max())
 
 
 def runs(flags, min_len):
@@ -144,7 +147,7 @@ class Recorder:
         self.state = 'IDLE'; self.m = None; self.t_state = 0.0; self.t_last_store = -1e9
         self.scr = None; self.n_scr = 0                       # current screen and how many samples it has lasted
         self.medals_pending = None                            # (t, medals, image) from the last 表彰 screen
-        self.ring = collections.deque()                       # (t, 480x270 frame) for the last RING_SECONDS
+        self.ring = collections.deque()                       # (t, 480x270 frame) every RING_STEP for the last RING_SECONDS
         self.rsp_t = None; self.prev_rsp = 0.0
         self.judge = []                                       # reads of the last judge screen: dict(t, result, label_score, my_pct, enemy_pct)
         self.judge_frame = None                               # (t, frame) of its first read with both %, kept as evidence
@@ -291,11 +294,11 @@ class Recorder:
         # a match can be aborted (connection error) and a new one started without a rule screen: timer back at the start
         if vis and rem == dur and t - m['t0'] > 30:
             self.log(f'[{t:8.1f}] timer back at {dur // 60}:00: previous match aborted, waiting for the new start (cards unknown)')
-            self.m = dict(m, card_tpl=None, start_patches=[], samples=[], kf=[], bubbles=[], kf_cands=[], kf_rows=[], pts_sec=None, obj_sec=None, t0=None, notes='restarted without rule screen')
+            self.m = dict(m, card_tpl=None, start_patches=[], samples=[], kf=[], bubbles=[], kf_cands=[], kf_rows=[], pts_sec=None, obj_sec=None, last_vis=None, t0=None, notes='restarted without rule screen')
             self.state = 'WAIT_HUD'; self.t_state = t; return
         row = dict(t=t, vis=vis, rem=rem, clock=clock)
         if vis:
-            row['slots'] = [hud.slot_state(f, i) for i in range(8)]
+            row['slots'] = hud.slot_states(f)
             row['g_or'], row['g_wh'] = hud.gauge_state(f); row['g_lv'] = hud.gauge_level(f)
             sec = int(t - m['t0'])                                    # paint points: first clean read of each second (~5 ms; rolling digits fail and retry next sample)
             if not m.get('nonturf') and m.get('pts_sec') != sec:
@@ -314,7 +317,7 @@ class Recorder:
                         if filled(row['zone'])[0] == 2: m['obj_sec'] = sec
             self.killfeed(f, t)
         bub = hud.crop(f, hud.BUBBLE)
-        row['bub'] = tm(bub, self.tpl_yar) if (bub.max(axis=2) < 60).mean() > 0.3 else 0.0
+        row['bub'] = tm(bub, self.tpl_yar) if dark_share(bub, 60) > 0.3 else 0.0
         if row['bub'] > BUB_CAPTURE:                                  # every sample of the bubble scores the killer card; the best one is kept
             if not m['bubbles'] or t - m['bubbles'][-1]['t'] > 6.0: m['bubbles'].append(dict(t=t, n=0, best=None, second=None))
             b = m['bubbles'][-1]; b['n'] += 1
@@ -325,9 +328,10 @@ class Recorder:
                     b['crop'] = crop.copy(); b['frame'] = cv2.resize(f, (crop.shape[0] * 16 // 9, crop.shape[0]), interpolation=cv2.INTER_AREA)   # evidence at crop height, grabbed now
         row['yar'] = tm(hud.crop(f, hud.BOTTOM), self.tpl_yar); row['rsp'] = tm(hud.crop(f, hud.RESPAWN), self.tpl_rsp)
         m['samples'].append(row)
+        if vis: m['last_vis'] = t
         self.evidence(f, t, row['rsp'])
         elapsed = t - m['t0']
-        last_vis = max((r['t'] for r in m['samples'] if r['vis']), default=t)
+        last_vis = t if m.get('last_vis') is None else m['last_vis']   # the last sample with the HUD (none yet: now)
         if not m.get('nonturf'): over = (rem == 0 and t - last_vis > 2) or (elapsed > 150 and t - last_vis > 8)
         else: over = t - last_vis > (END_GRACE if m.get('past_zero') else 8) and elapsed > dur - 30   # overtime may follow 0:00
         if over or t - last_vis > 60:
@@ -336,14 +340,14 @@ class Recorder:
     def evidence(self, f, t, rsp):
         """keep small frames; when the 'respawn in N s' text (own death) came and went without any bubble, save
         the frames around it so the miss can be examined later (samples/misses/)"""
-        self.ring.append((t, cv2.resize(f, (480, 270), interpolation=cv2.INTER_AREA)))
+        if not self.ring or t - self.ring[-1][0] >= RING_STEP - 0.05: self.ring.append((t, cv2.resize(f, (480, 270), interpolation=cv2.INTER_AREA)))
         while self.ring and t - self.ring[0][0] > RING_SECONDS: self.ring.popleft()
         if rsp > 0.9 and self.prev_rsp <= 0.9 and (self.rsp_t is None or t - self.rsp_t > 6): self.rsp_t = t
         self.prev_rsp = rsp
         if self.rsp_t is not None and t - self.rsp_t > 8:
             t_r = self.rsp_t; self.rsp_t = None
             if not any(t_r - 4 <= b['t'] <= t_r + 8 for b in self.m['bubbles']):
-                frames = [fr for tt, fr in self.ring if t_r - 5 <= tt <= t_r + 8][::5]       # every 0.5 s
+                frames = [fr for tt, fr in self.ring if t_r - 5 <= tt <= t_r + 8]             # every 0.5 s
                 if frames:
                     while len(frames) % 6: frames.append(np.zeros_like(frames[0]))
                     sheet = np.vstack([np.hstack(frames[i:i + 6]) for i in range(0, len(frames), 6)])
@@ -360,9 +364,9 @@ class Recorder:
         sigs = []
         for y0, y1 in KF_BANDS:
             band = f[y0:y1, KF_X0:KF_X1]
-            if (band.max(axis=2) < 60).mean() < 0.6: continue
+            if dark_share(band, 60) < 0.6: continue
             if tm(band, self.tpl_yar) > 0.6: continue                   # own 'やられた!' can share the stack
-            cols = np.where((band.min(axis=2) > 190).sum(axis=0) > 0)[0]
+            cols = np.where(white_mask(band, 190).sum(axis=0) > 0)[0]
             if len(cols) < 10 or cols.max() - KF_SUFFIX < 20: continue
             sig = signature(band[:, :cols.max() - KF_SUFFIX])
             if sig is not None: sigs.append(sig)
