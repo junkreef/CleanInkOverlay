@@ -11,7 +11,7 @@ Each slot carries the player's weapon icon (~92 px, not rotated, full colour) ov
 masked correlation against the team's 4 result-screen weapons links HUD slot <-> result row (8/8 on the sample,
 true 0.74-0.97, runner-up <= 0.66). Dead players show a grey silhouette + X instead of the icon.
 """
-import cv2, numpy as np, os, sys, json
+import cv2, itertools, numpy as np, os, sys, json
 sys.path.insert(0, os.path.dirname(__file__))
 from result_parser import glyph_boxes, merge_boxes, norm_glyph, white_mask, bright_mask, dark_share, GLYPH_DIR   # glyph sets: timer (build_timer_glyphs), points (HUD paint points, labelled by hand from clustered glyphs)
 
@@ -88,6 +88,21 @@ def timer_hud(f, glyphs):
         rem, clock, _ = read_timer(f, glyphs)
         if rem is not None and int(clock[2:]) < 60: return True, rem, clock   # the map / a jump over the box reads as '7:99', '0:99'...
     return (True, None, None) if overtime(f) else (False, None, None)
+
+
+MAP_X = (69, 126, 81, 138)             # y0, y1, x0, x1: the × of the "close" button, top left, shown while the map is open (X)
+MAP_PAD = 12                           # px searched around it
+MAP_THR = 0.5                          # map open 0.56 (still growing) - 0.99; the pin icon of the normal HUD and every other screen <= 0.37
+_map_tpl = []
+
+
+def map_open(f):
+    """the map fills the screen (opened with X; while dead too): HUD, slots and gauge are behind it. The icon top left is
+    the pin of the normal HUD turned into a white ×, told by that × (work/templates/map_close.png, from frames/0082_map_open.png)"""
+    if not _map_tpl: _map_tpl.append(cv2.imread(os.path.join(os.path.dirname(__file__), 'templates', 'map_close.png'), 0))
+    y0, y1, x0, x1 = MAP_X
+    m = white_mask(f[y0 - MAP_PAD:y1 + MAP_PAD, x0 - MAP_PAD:x1 + MAP_PAD], 200)
+    return bool(cv2.countNonZero(m)) and float(cv2.matchTemplate(m * 255, _map_tpl[0], cv2.TM_CCOEFF_NORMED).max()) >= MAP_THR
 
 
 def hud_visible(f):
@@ -306,13 +321,21 @@ def special_ready(samples, min_n=2):
     return out
 
 
+SPECIAL_CONFIRM = 1.5                  # s after an activation in which the gauge cannot be full again
+
+
 def special_uses(samples, min_gap=3.0):
     """samples: dicts with t, vis, g_or, g_wh (recorder rows) -> times of own special activations
-    (white/ready seen within 0.5 s, then orange >= 0.3 with no white). 17/17 on the 5 recorded matches."""
+    (white/ready seen within 0.5 s, then orange >= 0.3 with no white). 17/17 on the 5 recorded matches.
+    Only the colour of the ring area is looked at, so orange / red ink behind the map as it closes reads as the draining
+    ring (ガチアサリ 2026-10-29 2nd match: 9 -> 7 = the scoreboard). The recorder leaves those frames out (MAP_AFTER); as a
+    safety the ready ring seen again within SPECIAL_CONFIRM s means it was not used: a real use refills in tens of s"""
+    rows = [r for r in samples if r.get('vis') and 'g_wh' in r]
     out = []; last_full = -1e9; last_ev = -1e9
-    for r in samples:
-        if not r.get('vis') or 'g_wh' not in r: continue
+    for i, r in enumerate(rows):
         if r['g_wh'] >= READY_WHITE: last_full = r['t']
         elif r['g_or'] >= 0.3 and r['g_wh'] < 0.05 and 0 < r['t'] - last_full <= 0.5 and r['t'] - last_ev > min_gap:
+            later = itertools.takewhile(lambda x: x['t'] - r['t'] <= SPECIAL_CONFIRM, rows[i + 1:])
+            if any(x['g_wh'] >= READY_WHITE for x in later): continue
             out.append(r['t']); last_ev = r['t']
     return out

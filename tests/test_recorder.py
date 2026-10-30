@@ -225,3 +225,47 @@ def test_each_state_checks_only_its_screens():
     assert R.classify(result_f, R.SCREENS['WAIT_HUD']) is None and R.classify(notice, R.SCREENS['IDLE']) is None
     assert R.classify(hud_f, R.SCREENS['INGAME']) == 'hud' and R.classify(result_f, R.SCREENS['WAIT_RESULT']) == 'result'
     assert set(R.SCREENS) == {'IDLE', 'WAIT_HUD', 'INGAME', 'WAIT_RESULT'} and all(set(v) <= set(R.ALL_SCREENS) for v in R.SCREENS.values())
+
+
+def test_a_flash_over_the_full_gauge_is_no_special():
+    """another screen flashing over the full gauge reads as white -> orange like a use, but the ring is full again
+    right after; a real use drains and stays down (ガチアサリ 2026-10-29: 9 uses read, 7 on the scoreboard)"""
+    row = lambda t, o, w: dict(t=t, vis=True, g_or=o, g_wh=w)
+    used = [row(t / 10, 0.0, 0.3) for t in range(10)] + [row(1.0 + t / 10, 0.37 - t * 0.02, 0.0) for t in range(15)]
+    flash = [row(t / 10, 0.0, 0.3) for t in range(10)] + [row(1.0, 0.0, 0.0), row(1.1, 0.4, 0.0), row(1.2, 0.35, 0.0)] + [row(1.3 + t / 10, 0.0, 0.3) for t in range(10)]
+    assert hud.special_uses(used) == [1.0]
+    assert hud.special_uses(flash) == []
+
+
+def test_the_cards_are_taken_once_they_have_faded_in_at_every_phase():
+    """60 fps in, 1 frame in 6 analysed: where the rule screen starts within those 6 frames shifts every sample, so
+    each of the 6 phases is fed. The cards fade in over ~0.5 s; whatever the phase, they are taken again
+    RULE_CARDS_AT to RULE_CARDS_AT + 0.1 s after the screen appeared (start_match comes ~0.2 s in, too early)"""
+    appear = 1.0
+    for phase in range(6):
+        rec = R.Recorder(VIDEO, FakeStore(), dry=True, log=lambda *a: None)
+        for k in range(30):
+            t = phase / 60 + k * 0.1
+            rec.process(RULE_FRAME if t >= appear else OTHER_FRAME, t)
+        assert rec.state == 'WAIT_HUD' and rec.m['card_tpl'], phase
+        assert R.RULE_CARDS_AT <= rec.m['cards_at'] - appear < R.RULE_CARDS_AT + 0.1 + 1e-6, (phase, rec.m['cards_at'])
+
+
+def test_the_map_hides_the_hud_at_every_phase():
+    """the × top left tells the map; its samples and those of the next MAP_AFTER s (the HUD half back as it closes) are
+    no HUD. A 0.25 s look at the map is seen at each of the 6 sampling phases"""
+    hud_f, map_f = frame('0060_ingame_early.png'), frame('0082_map_open.png')
+    assert hud.map_open(map_f) and not hud.map_open(hud_f) and not hud.map_open(OTHER_FRAME)
+    assert R.classify(map_f, R.SCREENS['INGAME']) == 'map'
+    t_open, t_close = 5.0, 5.25
+    for phase in range(6):
+        rec = R.Recorder(VIDEO, FakeStore(), dry=True, log=lambda *a: None)
+        rec.m = dict(ts='x', t_rule=0.0, card_tpl=None, start_patches=[], samples=[], kf=[], bubbles=[], t0=0.0, notes=None, analysis='turf'); rec.state = 'INGAME'
+        seen = []; rec.killfeed = lambda f, t: seen.append(t)
+        for k in range(40, 70):
+            t = phase / 60 + k * 0.1
+            rec.process(map_f if t_open <= t < t_close else hud_f, t)
+        S = rec.m['samples']; on_map = [r['t'] for r in S if t_open <= r['t'] < t_close]; last = on_map[-1]
+        assert on_map and not any(r['vis'] for r in S if t_open <= r['t'] <= last + 0.15), phase
+        assert all(r['vis'] for r in S if r['t'] < t_open or r['t'] > last + 0.25), phase
+        assert not set(on_map) & set(seen), phase                     # nor the killfeed: 「スタート地点」 at the bottom reads as a kill

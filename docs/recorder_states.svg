@@ -24,7 +24,7 @@
   <rect class="box" x="40" y="110" width="470" height="190" rx="14"/>
   <text x="62" y="146" class="title">IDLE</text><text x="140" y="146" class="sub">待機 (ロビーなど)</text>
   <text x="62" y="180" class="on">見る: ルール画面 → 表彰 → リザルト表 → ジャッジ</text>
-  <text x="62" y="204" class="off">見ない: スケジュール更新、HUD</text>
+  <text x="62" y="204" class="off">見ない: スケジュール更新、マップ、HUD</text>
   <text x="62" y="236" class="note">表彰・リザルト表・ジャッジは、試合の途中でレコーダーを</text>
   <text x="62" y="256" class="note">起動したときのため (リザルト表が来たらそれで保存)</text>
 
@@ -32,7 +32,7 @@
   <rect class="box" x="790" y="110" width="470" height="190" rx="14"/>
   <text x="812" y="146" class="title">WAIT_HUD</text><text x="942" y="146" class="sub">試合の始まり待ち</text>
   <text x="812" y="180" class="on">見る: ルール画面 → HUD</text>
-  <text x="812" y="204" class="off">見ない: 表彰、リザルト表、ジャッジ、スケジュール更新</text>
+  <text x="812" y="204" class="off">見ない: 表彰、リザルト表、ジャッジ、スケジュール更新、マップ</text>
   <text x="812" y="236" class="note">ガチルール・名前のあるルールは、HUD が見えないとき</text>
   <text x="812" y="256" class="note">タイマーの箱で HUD を見る</text>
 
@@ -40,10 +40,10 @@
   <rect class="box" x="790" y="530" width="470" height="250" rx="14"/>
   <text x="812" y="566" class="title">INGAME</text><text x="912" y="566" class="sub">試合中</text>
   <text x="812" y="600" class="on">見る: ルール画面 → 表彰 → リザルト表 → ジャッジ</text>
-  <text x="812" y="622" class="on">　　→ スケジュール更新 → HUD (全部)</text>
-  <text x="812" y="652" class="note">HUD のコマではキル・デス・スペシャル・塗り・カウントなどを読む。</text>
-  <text x="812" y="672" class="note">HUD の判定は表彰・リザルト表・ルール画面でも当たることがある</text>
-  <text x="812" y="692" class="note">(保存画面 900 枚中 14 枚) ので、HUD は最後のまま。</text>
+  <text x="812" y="622" class="on">　　→ スケジュール更新 → マップ → HUD (全部)</text>
+  <text x="812" y="652" class="note">HUD のコマでキル・デス・スペシャルなどを読む。マップ中と閉じた</text>
+  <text x="812" y="672" class="note">直後 0.2 秒は HUD なし (何も読まない)。HUD の判定は表彰・</text>
+  <text x="812" y="692" class="note">リザルト表などでも当たる (900 枚中 14 枚) ので、最後のまま。</text>
   <text x="812" y="726" class="save">HUD の終わりを見逃したとき: リザルト表 /</text>
   <text x="812" y="746" class="save">スケジュール更新で保存して IDLE へ</text>
 
@@ -52,7 +52,7 @@
   <text x="62" y="566" class="title">WAIT_RESULT</text><text x="222" y="566" class="sub">リザルト待ち</text>
   <text x="62" y="600" class="on">見る: ルール画面 → 表彰 → リザルト表 → ジャッジ</text>
   <text x="62" y="622" class="on">　　→ スケジュール更新</text>
-  <text x="62" y="646" class="off">見ない: HUD</text>
+  <text x="62" y="646" class="off">見ない: マップ、HUD</text>
   <text x="62" y="676" class="note">ジャッジ (勝敗・% / カウント) と表彰 (メダル・自分の行) を</text>
   <text x="62" y="696" class="note">ためておき、保存のときに使う</text>
 

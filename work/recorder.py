@@ -71,6 +71,11 @@ RESULT_WAIT = 300.0               # s: a match ends without its result screen wh
 TITLE_THR = 0.8                   # rule-name signature: the same name >= 0.91 (269 stored ナワバリ screens), ガチホコバトル vs ナワバリバトル 0.63
 RULE_ANALYSIS = {'ナワバリバトル': 'turf', 'ガチヤグラ': 'track', 'ガチホコバトル': 'track', 'ガチエリア': 'zones', 'ガチアサリ': 'zones'}   # other names: 'other'
 OVERTIME_MAX = 300                # s: overtime lasts at most 5 minutes
+RULE_CARDS_AT = 1.0               # s after the rule screen appeared: the player cards fade in one by one and are all there
+                                  # from ~0.5 s (correlation with their final look ~0 at 0.2 s, >= 0.90 at 0.5 s, >= 0.89-0.99 at 1 s,
+                                  # 11 rule screens; the screen lasts 2.0-6.5 s). Taken at 0.2 s, the killer cards scored 0.4 instead of 0.8
+MAP_AFTER = 0.2                   # s after the map (top left ×) was last seen: closing, the × goes first and the timer reads again while the gauge
+                                  # is still see-through over the blurred ink (all 7 false special frames of 53 own deaths were within 0.05 s of the map)
 OBJ_MIN_SHARE = 0.3               # an unnamed rule keeps its track / area reads when they cover this share of its HUD seconds (track on ガチエリア: 0)
 END_GRACE = 15.0                  # s without HUD after 0:00 / overtime before a non-ナワバリ match counts as over (a splat in overtime shows the map ~10 s)
 
@@ -119,14 +124,14 @@ def card_scores(crop, tpl):
 
 
 CHECK = {'rule': lambda f: looks_like_rule(f), 'medals': lambda f: looks_like_medals(f), 'result': lambda f: looks_like_result(f),
-         'judge': lambda f: read_label(f)[0] is not None, 'schedule': lambda f: looks_like_schedule_update(f), 'hud': lambda f: hud.hud_visible(f)}
-ALL_SCREENS = ('rule', 'medals', 'result', 'judge', 'schedule', 'hud')   # checked in this order: the first that matches wins
+         'judge': lambda f: read_label(f)[0] is not None, 'schedule': lambda f: looks_like_schedule_update(f), 'map': lambda f: hud.map_open(f), 'hud': lambda f: hud.hud_visible(f)}
+ALL_SCREENS = ('rule', 'medals', 'result', 'judge', 'schedule', 'map', 'hud')   # checked in this order: the first that matches wins
 # the screens each state acts on (NOTES「レコーダーの状態と画面の判定」, docs/recorder_states.svg); the others are not checked
 # there. The HUD stays last: it also passes on a few 表彰 / result / rule screens (14 of ~900 saved ones)
 SCREENS = {
     'IDLE': ('rule', 'medals', 'result', 'judge'),                      # rule: a match starts; result (+ its judge / 表彰): the recorder started mid-match
     'WAIT_HUD': ('rule', 'hud'),                                         # hud: the timer starts; rule: another rule screen starts over
-    'INGAME': ('rule', 'medals', 'result', 'judge', 'schedule', 'hud'),  # judge: a ガチ match is over (ノックアウト); the screens after it in case the end of the HUD was missed
+    'INGAME': ('rule', 'medals', 'result', 'judge', 'schedule', 'map', 'hud'),  # judge: a ガチ match is over (ノックアウト); the screens after it in case the end of the HUD was missed; map: the HUD is behind it
     'WAIT_RESULT': ('rule', 'medals', 'result', 'judge', 'schedule'),    # whatever comes after the match; no HUD
 }
 
@@ -145,7 +150,8 @@ class Recorder:
         self.tpl_yar = cv2.imread(os.path.join(TPL_DIR, 'yarareta.png'), 0)
         self.tpl_rsp = cv2.imread(os.path.join(TPL_DIR, 'respawn.png'), 0)
         self.state = 'IDLE'; self.m = None; self.t_state = 0.0; self.t_last_store = -1e9
-        self.scr = None; self.n_scr = 0                       # current screen and how many samples it has lasted
+        self.scr = None; self.n_scr = 0; self.t_scr = 0.0     # current screen, how many samples it has lasted, since when
+        self.t_map = -1e9                                     # when the map was last seen
         self.medals_pending = None                            # (t, medals, image) from the last 表彰 screen
         self.ring = collections.deque()                       # (t, 480x270 frame) every RING_STEP for the last RING_SECONDS
         self.rsp_t = None; self.prev_rsp = 0.0
@@ -163,15 +169,20 @@ class Recorder:
             if vis and self.state == 'INGAME' and self.m.get('nonturf') and rem is not None and abs(rem - (self.m['dur'] - (t - self.m['t0']))) > 3:
                 vis = False                                   # a time that does not fit the match: the map or a jump over the box
             if vis and (self.m.get('nonturf') or self.m.get('analysis') or self.state == 'WAIT_HUD' and rem is not None and rem > 180): scr = 'hud'
+        if scr == 'map': self.t_map = t
+        elif scr == 'hud' and t - self.t_map <= MAP_AFTER: scr = None   # the map closing: the HUD only half back
         if scr == 'judge' and self.state == 'INGAME' and self.m.get('nonturf'):
             self.state = 'WAIT_RESULT'; self.t_state = t; self.log(f'[{t:8.1f}] judge screen: match over (elapsed {t - self.m["t0"]:.0f}s) -> waiting for result')   # ノックアウト: before the time is up
         self.n_scr = self.n_scr + 1 if scr == self.scr else 1; self.scr = scr
+        if self.n_scr == 1: self.t_scr = t                     # when this screen appeared
         if scr in STABLE and self.n_scr == STABLE[scr]:       # a screen has just become stable: analyse it once
             if scr == 'rule': self.on_rule(f, t)
             elif scr == 'medals': self.on_medals(f, t)
             elif scr == 'result': self.on_result(f, t)
             elif scr == 'schedule': self.on_schedule(t)
         if scr == 'judge': self.on_judge(f, t)
+        if scr == 'rule' and self.state == 'WAIT_HUD' and not self.m.get('cards_at') and t - self.m['t_rule0'] >= RULE_CARDS_AT - 1e-6:
+            self.retake_cards(f, t)
         s = self.state
         if s == 'WAIT_HUD':
             if scr == 'hud':
@@ -281,10 +292,17 @@ class Recorder:
         path = self.store.save_image(ts, 'rule', f)
         tid, title, sc = self.lib.identify(title_signature(f), 'title', thr=TITLE_THR); self.store.save_libraries()
         analysis = None if title is None else RULE_ANALYSIS.get(title, 'other')
-        self.m = dict(ts=ts, t_rule=t, rule_image=path, card_tpl=card_templates(read_cards(f)), start_patches=[], samples=[], kf=[], bubbles=[], t0=None, notes=None,
+        self.m = dict(ts=ts, t_rule=t, t_rule0=self.t_scr, rule_image=path, card_tpl=card_templates(read_cards(f)), start_patches=[], samples=[], kf=[], bubbles=[], t0=None, notes=None,
                       title_id=tid, title=title, analysis=analysis)
         self.state = 'WAIT_HUD'; self.t_state = t; self.ring.clear(); self.rsp_t = None
         self.log(f'[{t:8.1f}] RULE SCREEN {title or tid or "(no rule name)"} ({analysis or "rule unknown: the timer decides"}) -> waiting for HUD')
+
+    def retake_cards(self, f, t):
+        """the cards (and the saved rule screen) again once they have all faded in: start_match took them ~0.2 s into the
+        screen, when the lower ones are still missing or see-through"""
+        m = self.m; m['card_tpl'] = card_templates(read_cards(f)); m['cards_at'] = t
+        m['rule_image'] = self.store.save_image(m['ts'], 'rule', f)
+        self.log(f'[{t:8.1f}] player cards taken {t - m["t_rule0"]:.1f}s into the rule screen')
 
     # ------------------------------------------------------------ in match
     def sample(self, f, t, vis):
