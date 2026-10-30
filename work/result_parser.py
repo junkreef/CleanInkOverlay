@@ -45,6 +45,13 @@ def white_mask(bgr, thr=170):
     return (bgr.min(axis=2) > thr).astype(np.uint8)
 
 
+def dark_share(bgr, below):
+    """share of the pixels whose brightest channel is below `below`: the same as (bgr.max(axis=2) < below).mean(),
+    ~20x faster (numpy's max over a 3-long axis took 16 ms on the result panel, every frame)"""
+    m = cv2.inRange(bgr, (0, 0, 0), (below - 1,) * 3)
+    return cv2.countNonZero(m) / m.size
+
+
 def glyph_boxes(mask, min_h, max_h, min_w=3):
     n, lab, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
     boxes = [tuple(stats[i][:4]) for i in range(1, n) if min_h <= stats[i][3] <= max_h and stats[i][2] >= min_w]

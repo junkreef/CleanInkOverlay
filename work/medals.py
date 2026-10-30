@@ -12,6 +12,7 @@ text (dark on white) region, squid medal icon (yellow = gold, grey = silver). Th
 import cv2, numpy as np, os, sys
 sys.path.insert(0, os.path.dirname(__file__))
 from signatures import Library
+from result_parser import dark_share
 
 ROOT = os.path.join(os.path.dirname(__file__), '..')
 TPL = os.path.join(os.path.dirname(__file__), 'templates', 'medals_header.png')
@@ -56,7 +57,7 @@ def header_score(f):
 
 def looks_like_medals(f):
     pan = f[PANEL[0]:PANEL[1], PANEL[2]:PANEL[3]]
-    if (pan.max(axis=2) < 70).mean() < 0.3: return False
+    if dark_share(pan, 70) < 0.3: return False
     return header_score(f) > 0.8
 
 

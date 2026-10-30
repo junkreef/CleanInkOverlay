@@ -203,3 +203,25 @@ def test_the_named_rule_titles_pick_the_analysis():
         rec = R.Recorder(VIDEO, FakeStore(), dry=True, log=lambda *a: None)
         rec.start_match(frame(name), 40.0)
         assert (rec.m['title'], rec.m['analysis']) == (title, analysis), name
+
+
+def test_a_schedule_change_stores_it_at_once():
+    """「スケジュールが更新されました」 (where the scoreboard would come): stored after 3 samples, not RESULT_WAIT later"""
+    notice = frame('schedule_updated.png')
+    assert R.classify(notice) == 'schedule' and R.classify(OTHER_FRAME) is None
+    rec, store = nonturf_match()
+    rec.medals_pending = dict(t=735.0, medals=[], image='m.png', panel=PANEL)
+    for k in range(3): rec.process(notice, 744.3 + 0.1 * k)
+    assert rec.state == 'IDLE' and len(store.inserted) == 1
+    assert store.inserted[0]['players'][0]['weapon'] == 'プロモデラーMG'
+    rec.process(notice, 744.6)                                           # the rest of the notice: nothing more to store
+    assert len(store.inserted) == 1 and rec.state == 'IDLE'
+
+
+def test_each_state_checks_only_its_screens():
+    hud_f, result_f, notice = frame('0060_ingame_early.png'), frame('0268_result_scoreboard.png'), frame('schedule_updated.png')
+    assert (R.classify(hud_f), R.classify(result_f), R.classify(notice)) == ('hud', 'result', 'schedule')
+    assert R.classify(hud_f, R.SCREENS['IDLE']) is None and R.classify(hud_f, R.SCREENS['WAIT_RESULT']) is None
+    assert R.classify(result_f, R.SCREENS['WAIT_HUD']) is None and R.classify(notice, R.SCREENS['IDLE']) is None
+    assert R.classify(hud_f, R.SCREENS['INGAME']) == 'hud' and R.classify(result_f, R.SCREENS['WAIT_RESULT']) == 'result'
+    assert set(R.SCREENS) == {'IDLE', 'WAIT_HUD', 'INGAME', 'WAIT_RESULT'} and all(set(v) <= set(R.ALL_SCREENS) for v in R.SCREENS.values())

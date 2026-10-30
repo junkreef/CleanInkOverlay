@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1300 880" width="1300" height="880" font-family="'Yu Gothic UI','Meiryo','Hiragino Sans',sans-serif">
+  <!-- レコーダー (work/recorder.py) の状態と、状態ごとに判定する画面 (SCREENS)。NOTES「レコーダーの状態と画面の判定」 -->
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#444"/></marker>
+    <marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0a7d55"/></marker>
+    <style>
+      .box { fill: #ffffff; stroke: #333; stroke-width: 2; }
+      .title { font-size: 22px; font-weight: 700; fill: #111; }
+      .sub { font-size: 15px; fill: #555; }
+      .on { font-size: 14px; fill: #0b5cad; }
+      .off { font-size: 14px; fill: #999; }
+      .lbl { font-size: 13.5px; fill: #222; }
+      .save { font-size: 13.5px; fill: #0a7d55; font-weight: 700; }
+      .edge { stroke: #444; stroke-width: 2; fill: none; marker-end: url(#a); }
+      .edges { stroke: #0a7d55; stroke-width: 2.5; fill: none; marker-end: url(#s); }
+      .note { font-size: 13px; fill: #555; }
+    </style>
+  </defs>
+  <rect width="1300" height="880" fill="#f6f7f9"/>
+  <text x="40" y="44" font-size="24" font-weight="700" fill="#111">レコーダーの状態と、状態ごとに判定する画面</text>
+  <text x="40" y="70" class="note">1 コマ (約 0.1 秒) ごとに、今の状態で「見る」画面だけを左から順に判定し、最初に当たったものをその画面とする。「見ない」画面の判定はしない。</text>
+
+  <!-- IDLE -->
+  <rect class="box" x="40" y="110" width="470" height="190" rx="14"/>
+  <text x="62" y="146" class="title">IDLE</text><text x="140" y="146" class="sub">待機 (ロビーなど)</text>
+  <text x="62" y="180" class="on">見る: ルール画面 → 表彰 → リザルト表 → ジャッジ</text>
+  <text x="62" y="204" class="off">見ない: スケジュール更新、HUD</text>
+  <text x="62" y="236" class="note">表彰・リザルト表・ジャッジは、試合の途中でレコーダーを</text>
+  <text x="62" y="256" class="note">起動したときのため (リザルト表が来たらそれで保存)</text>
+
+  <!-- WAIT_HUD -->
+  <rect class="box" x="790" y="110" width="470" height="190" rx="14"/>
+  <text x="812" y="146" class="title">WAIT_HUD</text><text x="942" y="146" class="sub">試合の始まり待ち</text>
+  <text x="812" y="180" class="on">見る: ルール画面 → HUD</text>
+  <text x="812" y="204" class="off">見ない: 表彰、リザルト表、ジャッジ、スケジュール更新</text>
+  <text x="812" y="236" class="note">ガチルール・名前のあるルールは、HUD が見えないとき</text>
+  <text x="812" y="256" class="note">タイマーの箱で HUD を見る</text>
+
+  <!-- INGAME -->
+  <rect class="box" x="790" y="530" width="470" height="250" rx="14"/>
+  <text x="812" y="566" class="title">INGAME</text><text x="912" y="566" class="sub">試合中</text>
+  <text x="812" y="600" class="on">見る: ルール画面 → 表彰 → リザルト表 → ジャッジ</text>
+  <text x="812" y="622" class="on">　　→ スケジュール更新 → HUD (全部)</text>
+  <text x="812" y="652" class="note">HUD のコマではキル・デス・スペシャル・塗り・カウントなどを読む。</text>
+  <text x="812" y="672" class="note">HUD の判定は表彰・リザルト表・ルール画面でも当たることがある</text>
+  <text x="812" y="692" class="note">(保存画面 900 枚中 14 枚) ので、HUD は最後のまま。</text>
+  <text x="812" y="726" class="save">HUD の終わりを見逃したとき: リザルト表 /</text>
+  <text x="812" y="746" class="save">スケジュール更新で保存して IDLE へ</text>
+
+  <!-- WAIT_RESULT -->
+  <rect class="box" x="40" y="530" width="470" height="250" rx="14"/>
+  <text x="62" y="566" class="title">WAIT_RESULT</text><text x="222" y="566" class="sub">リザルト待ち</text>
+  <text x="62" y="600" class="on">見る: ルール画面 → 表彰 → リザルト表 → ジャッジ</text>
+  <text x="62" y="622" class="on">　　→ スケジュール更新</text>
+  <text x="62" y="646" class="off">見ない: HUD</text>
+  <text x="62" y="676" class="note">ジャッジ (勝敗・% / カウント) と表彰 (メダル・自分の行) を</text>
+  <text x="62" y="696" class="note">ためておき、保存のときに使う</text>
+
+  <!-- IDLE -> WAIT_HUD -->
+  <path class="edge" d="M510,170 L790,170"/>
+  <text x="530" y="140" class="lbl">ルール画面 (3 コマ):</text>
+  <text x="530" y="160" class="lbl">ルール名で読み方を決める</text>
+  <!-- WAIT_HUD -> IDLE -->
+  <path class="edge" d="M790,250 L510,250"/>
+  <text x="530" y="274" class="lbl">150 秒たっても HUD が出ない</text>
+
+  <!-- WAIT_HUD -> INGAME -->
+  <path class="edge" d="M960,300 L960,530"/>
+  <text x="972" y="396" class="lbl">タイマーが動き出す</text>
+  <text x="972" y="416" class="lbl">(ナワバリ 3:00 → / ガチ 5:00 →)</text>
+  <!-- INGAME -> WAIT_HUD (abort) -->
+  <path class="edge" d="M1200,530 L1200,300"/>
+  <text x="1212" y="396" class="lbl">中断</text>
+  <text x="1212" y="416" class="note">ルール画面 /</text>
+  <text x="1212" y="434" class="note">タイマーが</text>
+  <text x="1212" y="452" class="note">戻る</text>
+
+  <!-- INGAME -> WAIT_RESULT -->
+  <path class="edge" d="M790,610 L510,610"/>
+  <text x="530" y="596" class="lbl">試合が終わった (HUD が消えた)</text>
+  <text x="530" y="636" class="note">ナワバリ: 0:00 のあと 2 秒 /</text>
+  <text x="530" y="654" class="note">　150 秒すぎて 8 秒</text>
+  <text x="530" y="676" class="note">ガチ: ジャッジ画面 /</text>
+  <text x="530" y="694" class="note">　終了 30 秒前すぎて 8 秒</text>
+  <text x="530" y="712" class="note">　(0:00・延長のあとは 15 秒)</text>
+  <text x="530" y="734" class="note">共通: HUD が 60 秒見えない</text>
+
+  <!-- WAIT_RESULT -> IDLE (store) -->
+  <path class="edges" d="M150,530 L150,300"/>
+  <text x="166" y="350" class="save">保存して待機へ</text>
+  <text x="166" y="372" class="lbl">・リザルト表 (10 コマ): 表の中身で保存</text>
+  <text x="166" y="394" class="lbl">・スケジュール更新 (3 コマ): リザルト表なしで保存</text>
+  <text x="166" y="416" class="lbl">・300 秒なにも来ない: リザルト表なしで保存</text>
+  <text x="166" y="438" class="lbl">・(録画ファイルのとき) 動画の終わり</text>
+  <!-- WAIT_RESULT -> WAIT_HUD (next rule screen) -->
+  <path class="edges" d="M510,550 C650,500 700,340 790,285"/>
+  <text x="528" y="370" class="save">次のルール画面:</text>
+  <text x="528" y="390" class="lbl">前の試合を</text>
+  <text x="528" y="408" class="lbl">リザルト表なしで</text>
+  <text x="528" y="426" class="lbl">保存して</text>
+  <text x="528" y="444" class="lbl">始まり待ちへ</text>
+
+  <text x="40" y="830" class="note">保存しないで捨てるのは: ガチでジャッジ・表彰・リザルト表のどれもない試合、リザルト表が読めず試合中の記録もない試合。</text>
+  <text x="40" y="852" class="note">どの状態でもルール画面が来たら新しい試合として WAIT_HUD へ (IDLE 以外では、その前の試合を上のとおり保存 / 中断)。</text>
+</svg>

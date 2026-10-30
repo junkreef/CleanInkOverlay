@@ -5,7 +5,7 @@
 import argparse, json, os, sys, time
 import cv2, numpy as np
 sys.path.insert(0, os.path.dirname(__file__))
-from result_parser import parse, Glyphs, RESULT_ROWS
+from result_parser import parse, Glyphs, RESULT_ROWS, dark_share
 from weapon_match import load_main_weapons
 from live_capture import find_device
 
@@ -13,9 +13,9 @@ from live_capture import find_device
 def looks_like_result(f):
     """dark result panel with 8 dark player rows and a bright header bar"""
     panel = f[300:1000, 800:1850]
-    if (panel.max(axis=2) < 40).mean() < 0.3:
+    if dark_share(panel, 40) < 0.3:
         return False
-    rows = [(f[y - 15:y + 55, 1040:1130].max(axis=2) < 40).mean() for y in RESULT_ROWS.values()]
+    rows = [dark_share(f[y - 15:y + 55, 1040:1130], 40) for y in RESULT_ROWS.values()]
     return min(rows) > 0.3 and (f[235:285, 925:1710].max(axis=2) > 120).mean() > 0.3
 
 

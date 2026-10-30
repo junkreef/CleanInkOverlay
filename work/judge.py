@@ -17,7 +17,7 @@ at x 166, right text ends at x 1757. The label
 """
 import cv2, json, numpy as np, os, re, sys
 sys.path.insert(0, os.path.dirname(__file__))
-from result_parser import Glyphs, GLYPH_DIR, white_mask, glyph_boxes, merge_boxes, norm_glyph
+from result_parser import Glyphs, GLYPH_DIR, white_mask, dark_share, glyph_boxes, merge_boxes, norm_glyph
 
 TPL_DIR = os.path.join(os.path.dirname(__file__), 'templates')
 LABEL = (40, 150, 20, 340)               # y0, y1, x0, x1: search area of the WIN! / LOSE... label
@@ -45,7 +45,7 @@ def label_mask(f):
 def read_label(f):
     """'win' / 'lose' / None, and the best template score"""
     box = f[LABEL[0]:LABEL[1], LABEL[2]:LABEL[3]]
-    if (box.max(axis=2) < 50).mean() < 0.35: return None, 0.0      # no black splash: cheap exit for every other frame
+    if dark_share(box, 50) < 0.35: return None, 0.0      # no black splash: cheap exit for every other frame
     m = label_mask(f)
     sc = {k: float(cv2.matchTemplate(m, t, cv2.TM_CCOEFF_NORMED).max()) for k, t in label_templates().items()}
     if not sc: return None, 0.0

@@ -42,6 +42,7 @@ from rule_screen import read_cards, title_signature
 import objective, area
 from medals import looks_like_medals, parse_medals
 from judge import read_label, read_judge
+from schedule import looks_like_schedule_update
 from counts import read_judge_counts, read_scoreboard_counts
 from panel import read_panel, learn_weapon
 import hud
@@ -61,11 +62,11 @@ BUB_CARD_K = 0.5                  # both sides matched at half size: ~14 ms per 
 BUB_KILLER = 0.5                  # best card score that names the killer (correct ~0.94, wrong <= 0.30)
 BUB_EVIDENCE_BELOW = 1.01         # save the best card crop + frame of bubbles scoring below this (samples/bubbles/); every bubble for now, 0.8 once live positives are collected
 RING_SECONDS = 15                 # small frames kept for evidence when an own death shows no bubble
-STABLE = {'rule': 3, 'medals': 3, 'result': 10}
+STABLE = {'rule': 3, 'medals': 3, 'result': 10, 'schedule': 3}   # 'schedule': the notice shows ~0.9 s
 JUDGE_LABEL_MIN = 0.9             # label score that counts as a win / lose vote (the real labels score >= 0.98)
 COUNT_FIELDS = ('my_count', 'enemy_count', 'knockout', 'my_team_points', 'enemy_team_points')   # ガチルール: matches columns from work/counts.py
 JUDGE_GAP = 30.0                  # s: judge frames further apart than this belong to different matches
-RESULT_WAIT = 300.0               # s: a match ends without its result screen when nothing came for this long (after the HUD / the last judge or medal screen)
+RESULT_WAIT = 300.0               # s: a match ends without its result screen when nothing came for this long after the end of its HUD (ガチルール: or its judge screen); a schedule change says so at once (on_schedule)
 TITLE_THR = 0.8                   # rule-name signature: the same name >= 0.91 (269 stored ナワバリ screens), ガチホコバトル vs ナワバリバトル 0.63
 RULE_ANALYSIS = {'ナワバリバトル': 'turf', 'ガチヤグラ': 'track', 'ガチホコバトル': 'track', 'ガチエリア': 'zones', 'ガチアサリ': 'zones'}   # other names: 'other'
 OVERTIME_MAX = 300                # s: overtime lasts at most 5 minutes
@@ -114,14 +115,22 @@ def card_scores(crop, tpl):
     return sorted(((max(float(cv2.matchTemplate(small, t, cv2.TM_CCOEFF_NORMED).max()) for t in ts), slot) for slot, ts in tpl), reverse=True)
 
 
-def classify(f):
-    """which screen is this frame? checked in order of cost; None = anything else (lobby, intro, map...)"""
-    if looks_like_rule(f): return 'rule'
-    if looks_like_medals(f): return 'medals'
-    if looks_like_result(f): return 'result'
-    if read_label(f)[0]: return 'judge'
-    if hud.hud_visible(f): return 'hud'
-    return None
+CHECK = {'rule': lambda f: looks_like_rule(f), 'medals': lambda f: looks_like_medals(f), 'result': lambda f: looks_like_result(f),
+         'judge': lambda f: read_label(f)[0] is not None, 'schedule': lambda f: looks_like_schedule_update(f), 'hud': lambda f: hud.hud_visible(f)}
+ALL_SCREENS = ('rule', 'medals', 'result', 'judge', 'schedule', 'hud')   # checked in this order: the first that matches wins
+# the screens each state acts on (NOTES「レコーダーの状態と画面の判定」, docs/recorder_states.svg); the others are not checked
+# there. The HUD stays last: it also passes on a few 表彰 / result / rule screens (14 of ~900 saved ones)
+SCREENS = {
+    'IDLE': ('rule', 'medals', 'result', 'judge'),                      # rule: a match starts; result (+ its judge / 表彰): the recorder started mid-match
+    'WAIT_HUD': ('rule', 'hud'),                                         # hud: the timer starts; rule: another rule screen starts over
+    'INGAME': ('rule', 'medals', 'result', 'judge', 'schedule', 'hud'),  # judge: a ガチ match is over (ノックアウト); the screens after it in case the end of the HUD was missed
+    'WAIT_RESULT': ('rule', 'medals', 'result', 'judge', 'schedule'),    # whatever comes after the match; no HUD
+}
+
+
+def classify(f, screens=ALL_SCREENS):
+    """which screen is this frame, of `screens`? None = anything else (lobby, intro, map...)"""
+    return next((s for s in screens if CHECK[s](f)), None)
 
 
 class Recorder:
@@ -145,7 +154,7 @@ class Recorder:
 
     # ------------------------------------------------------------ per frame
     def process(self, f, t):
-        scr = classify(f)
+        scr = classify(f, SCREENS[self.state])
         if scr is None and self.m and self.state in ('WAIT_HUD', 'INGAME') and self.m.get('analysis') != 'turf':
             vis, rem, _ = hud.timer_hud(f, self.glyphs)       # no paint points top right: the timer box tells the HUD
             if vis and self.state == 'INGAME' and self.m.get('nonturf') and rem is not None and abs(rem - (self.m['dur'] - (t - self.m['t0']))) > 3:
@@ -158,6 +167,7 @@ class Recorder:
             if scr == 'rule': self.on_rule(f, t)
             elif scr == 'medals': self.on_medals(f, t)
             elif scr == 'result': self.on_result(f, t)
+            elif scr == 'schedule': self.on_schedule(t)
         if scr == 'judge': self.on_judge(f, t)
         s = self.state
         if s == 'WAIT_HUD':
@@ -186,6 +196,13 @@ class Recorder:
         elif self.state == 'WAIT_RESULT':
             self.log(f'[{t:8.1f}] rule screen before the result: storing the previous match without it'); self.finish(None, t)
         self.start_match(f, t)
+
+    def on_schedule(self, t):
+        """「スケジュールが更新されました」: the scoreboard is skipped, so the match is stored now with its judge screen
+        and panel (otherwise only the next rule screen or RESULT_WAIT would store it, and stopping the recorder before
+        that lost it)"""
+        if self.state in ('INGAME', 'WAIT_RESULT'):
+            self.log(f'[{t:8.1f}] schedule changed: no result screen will come, storing the match without it'); self.finish(None, t)
 
     def on_medals(self, f, t):
         meds = parse_medals(f, self.lib); self.store.save_libraries()
