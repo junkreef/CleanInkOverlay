@@ -156,7 +156,7 @@ class Store:
     # ------------------------------------------------------------------ matches
     def insert_match(self, match, players, events, medals=(), timeline=()):
         """match: matches columns; players: match_players dicts (without match_id); events: events dicts; medals: dicts from
-        medals.parse_medals; timeline: per-second dicts (t_s, points, gauge, ready). Returns the match id."""
+        medals.parse_medals; timeline: per-second dicts (t_s, points, gauge, ready, obj_pos, obj_holder, my_best, enemy_best, my_count, enemy_count, my_penalty, enemy_penalty, overtime). Returns the match id."""
         m = Match(**{k: v for k, v in match.items() if k != 'id'})
         m.players = [MatchPlayer(**p) for p in players]
         m.events = [Event(**e) for e in events]
@@ -192,11 +192,18 @@ class Store:
             out['players'] = [p.to_dict() for p in m.players]
             out['events'] = [e.to_dict() for e in m.events]
             out['medals'] = [d.to_dict() for d in m.medals]
+            out['timeline'] = [{k: v for k, v in r.to_dict().items() if k != 'match_id'} for r in m.timeline]
         return out
 
-    def stats(self):
+    def stats(self, since=None, mode=None, rule=None):
+        """the stat tables (optionally only matches started at/after `since` / of one `mode` / `rule`, queries.GACHI = every
+        ガチ rule), my newest results, and the modes / rules there are to pick from"""
         with self.Session() as s:
-            return queries.stats(s)
+            out = queries.stats(s, since, mode, rule)
+            out['recent'] = queries.rows(s, queries.recent_results(since=since, mode=mode, rule=rule))
+            out['modes'] = list(s.scalars(select(Match.mode).where(Match.mode.is_not(None)).distinct().order_by(Match.mode)))
+            out['rules'] = list(s.scalars(select(Match.rule).where(Match.rule.is_not(None)).distinct().order_by(Match.rule)))
+        return out
 
     def overlay(self, since=None, limit=8):
         """data for the stream overlay: session totals (matches started at/after `since`, ISO local time; None = everything),
@@ -245,9 +252,9 @@ class Store:
             # medals / stages / modes / rules already stored under the id become readable
             s.execute(update(Medal).where(Medal.sig_id == sid).values(name=label))
             kind = lib.items[sid]['kind']
-            if kind in ('stage', 'mode', 'rule'):
-                col = getattr(Match, kind)
-                s.execute(update(Match).where(col.is_(None), Match.raw_json.like(f'%"{kind}_id": "{sid}"%')).values({kind: label}))
+            if kind in ('stage', 'mode', 'rule', 'title'):                  # title = the rule name on the rule screen: fills rule too
+                col = getattr(Match, 'rule' if kind == 'title' else kind)
+                s.execute(update(Match).where(col.is_(None), Match.raw_json.like(f'%"{kind}_id": "{sid}"%')).values({col.key: label}))
         self.events.publish('signatures_changed', {'id': sid})
 
     def signature_examples(self, sid, limit=3):
@@ -256,7 +263,7 @@ class Store:
             rows = queries.rows(s, select(Medal.match_id, Medal.position, Match.medal_image).join(Match, Match.id == Medal.match_id)
                                    .where(Medal.sig_id == sid).order_by(Medal.match_id.desc()).limit(limit))
             if rows: return rows
-            kind = {'s': 'stage', 'm': 'mode', 'r': 'rule'}.get(sid[:1])             # stage / mode / rule ids live in raw_json
+            kind = {'s': 'stage', 'm': 'mode', 'r': 'rule', 't': 'title'}.get(sid[:1])   # stage / mode / rule / title ids live in raw_json
             if kind is None: return []
             return queries.rows(s, select(Match.id.label('match_id'), Match.rule_image, Match.result_image)
                                    .where(Match.raw_json.like(f'%"{kind}_id": "{sid}"%')).order_by(Match.id.desc()).limit(limit))

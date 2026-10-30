@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { api, post, subscribe } from '../api.js'
 import WeaponIcons from './WeaponIcons.jsx'
 
-const KIND = { stage: 'ステージ', medal: '表彰', mode: 'モード', rule: 'ルール' }
+const KIND = { stage: 'ステージ', medal: '表彰', mode: 'モード', rule: 'ルール', title: 'ルール (開始画面)' }
 
 // an unlabelled stage / medal signature: show where it was seen (the saved screen) and ask for the text
 function Item({ it, onDone }) {

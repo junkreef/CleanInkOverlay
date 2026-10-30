@@ -88,6 +88,14 @@ def test_store_roundtrip_and_stats(tmp_path):
     assert st['enemy_weapon_stats'][1] == {'weapon': 'スプラローラー', 'seen': 2, 'wins': 1, 'win_pct': 50.0, 'killed_me': 2, 'i_killed': 2}
     assert sorted(st['medal_stats'], key=lambda r: r['name']) == [{'name': 'm_abcd', 'rank': 'silver', 'n': 2}, {'name': 'ナワバリ王', 'rank': 'gold', 'n': 2}]
     assert st['my_timeline'] == [{'from_s': 0, 'type': 'killed_by', 'n': 2}, {'from_s': 30, 'type': 'kill', 'n': 2}]
+    assert st['overview'][0]['games'] == 2 and st['overview'][0]['wins'] == 1 and st['overview'][0]['losses'] == 1
+    assert [r['result'] for r in st['recent']] == ['lose', 'win'] and [r['games'] for r in st['daily_stats']] == [2]
+
+    later = s.stats(since='2026-09-16T20:30:00')                 # only the second match (the loss)
+    assert later['overview'][0]['games'] == 1 and later['overview'][0]['losses'] == 1 and later['weapon_stats'][0]['wins'] == 0
+    assert later['enemy_weapon_stats'][1] == {'weapon': 'スプラローラー', 'seen': 1, 'wins': 0, 'win_pct': 0.0, 'killed_me': 1, 'i_killed': 1}
+    assert later['medal_stats'][0]['n'] == 1 and [r['n'] for r in later['my_timeline']] == [1, 1]
+    assert s.stats(mode='no such mode')['overview'][0]['games'] == 0 and s.stats(mode='no such mode')['weapon_stats'] == []
 
     ov = s.overlay('2026-09-16T20:30:00', limit=8)
     assert ov['session']['matches'] == 1 and ov['session']['losses'] == 1 and ov['session']['streak'] == {'kind': 'lose', 'n': 1}
@@ -106,6 +114,44 @@ def test_store_roundtrip_and_stats(tmp_path):
     for t in ('match_players', 'events', 'medals', 'timeline'):
         assert con.execute(f'SELECT COUNT(*) FROM {t} WHERE match_id = 1').fetchone()[0] == 0
     con.close(); s.close()
+
+
+def test_gachi_counts_knockouts_and_the_rule_filter(tmp_path):
+    s = Store(db_path=str(tmp_path / 'gachi.db'))
+    s.insert_match(*sample_match())                                                     # ナワバリ, win
+    for started, rule, result, mc, ec, ko in (('2026-09-16T21:00:00', 'ガチヤグラ', 'win', 100, 0, 1), ('2026-09-16T21:10:00', 'ガチヤグラ', 'lose', 62, 90, 0),
+                                               ('2026-09-16T21:20:00', None, 'lose', 0, 100, 1)):   # the last: rule screen not labelled yet
+        match, players, *rest = sample_match(started, result)
+        match.update(mode='バンカラマッチ(チャレンジ)', rule=rule, my_pct=None, enemy_pct=None, my_count=mc, enemy_count=ec, knockout=ko)
+        s.insert_match(match, players, *rest)
+
+    assert [(m['my_count'], m['enemy_count'], m['knockout']) for m in s.list_matches()] == [(0, 100, 1), (62, 90, 0), (100, 0, 1), (None, None, None)]
+    assert s.overlay(None)['last']['knockout'] == 1
+
+    o = s.stats()['overview'][0]
+    assert (o['games'], o['count_games'], o['ko_wins'], o['ko_losses'], o['avg_my_count'], o['avg_enemy_count']) == (4, 3, 1, 1, 54.0, 63.3)
+    g = s.stats(rule='@gachi')
+    assert g['overview'][0]['games'] == 3 and [r['result'] for r in g['recent']] == ['lose', 'lose', 'win']
+    assert s.stats(rule='ガチヤグラ')['overview'][0]['games'] == 2 and s.stats(rule='ナワバリバトル')['overview'][0]['ko_wins'] is None
+    assert s.stats()['rules'] == ['ガチヤグラ', 'ナワバリバトル']
+    assert {r['rule']: (r['games'], r['wins'], r['ko_wins'], r['ko_losses']) for r in s.stats()['rule_stats']} == {
+        'ガチヤグラ': (2, 1, 1, 0), None: (1, 0, 0, 1), 'ナワバリバトル': (1, 1, None, None)}
+    s.close()
+
+
+def test_objective_timeline_and_the_rule_name_of_the_rule_screen(tmp_path):
+    s = Store(root=str(tmp_path), db_path=str(tmp_path / 'obj.db'))            # its own signatures.json under tmp_path
+    match, players, events, medals, _ = sample_match()
+    match.update(rule=None, raw_json=json.dumps({'title_id': 't_test1'}))
+    timeline = [dict(t_s=0, points=None, gauge=0.0, ready=0, obj_pos=0.3, obj_holder=None, my_best=0.0, enemy_best=0.0, my_count=3, enemy_count=0, overtime=0),
+                dict(t_s=301, points=None, gauge=0.5, ready=0, obj_pos=78.1, obj_holder='my', my_best=78.1, enemy_best=80.0, overtime=1)]
+    mid = s.insert_match(match, players, events, medals, timeline)
+    assert [(r['t_s'], r['obj_pos'], r['obj_holder'], r['my_best'], r['my_count'], r['overtime']) for r in s.get_match(mid)['timeline']] == [(0, 0.3, None, 0.0, 3, 0), (301, 78.1, 'my', 78.1, None, 1)]
+    s.signatures().items['t_test1'] = {'kind': 'title', 'label': None, 'sig': [0.0]}
+    assert s.signature_examples('t_test1') == [{'match_id': mid, 'rule_image': None, 'result_image': None}]
+    s.label_signature('t_test1', 'ガチヤグラ')                                        # naming the rule screen's rule name fills rule
+    assert s.get_match(mid)['rule'] == 'ガチヤグラ'
+    s.close()
 
 
 def test_check_constraints_are_enforced(tmp_path):

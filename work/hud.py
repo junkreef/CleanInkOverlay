@@ -4,6 +4,9 @@
     python work/hud.py --test-timer VIDEO T0 T1      # read the timer every 0.5 s and report inconsistencies
 
 HUD layout (1080p): 8 squid slots y 38-112, ally x 527-869, enemy x 1057-1390; timer box y 48-104 x 910-1010.
+The rules other than ナワバリ (5:00) have the same squids / timer / killfeed / bubbles, but no paint points top right
+(so hud_visible is False there: the recorder asks timer_hud instead), and after 0:00 they can go into overtime, when
+the timer box shows 「延長中!」 instead of digits (overtime()).
 Each slot carries the player's weapon icon (~92 px, not rotated, full colour) over the team-coloured squid, so a
 masked correlation against the team's 4 result-screen weapons links HUD slot <-> result row (8/8 on the sample,
 true 0.74-0.97, runner-up <= 0.66). Dead players show a grey silhouette + X instead of the icon.
@@ -16,6 +19,8 @@ SLOT_X = [(527, 597), (622, 692), (711, 781), (799, 869), (1057, 1127), (1145, 1
 SLOT_Y = (38, 112)
 TIMER = (48, 104, 905, 1015)
 POINTS = (45, 110, 1500, 1690)
+OVERTIME = (38, 114, 885, 1035)   # around the timer box: 「延長中!」 in team colours with a black outline, matched by the outline
+OVERTIME_THR = 0.6                # the letters (outline + inside) score 0.90-1.00 over the overtime, <= 0.32 on any other HUD / screen
 KILLFEED = (995, 1045, 720, 1200); BUBBLE = (390, 490, 780, 1140); BOTTOM = (975, 1065, 780, 1140); RESPAWN = (960, 1030, 1550, 1910)
 ICON_SIZES = (88, 92, 96)
 
@@ -45,6 +50,34 @@ def read_timer(f, glyphs):
         return None, None, min(sc)
     rem = int(txt[0]) * 60 + int(txt[1:])
     return rem, f'{txt[0]}:{txt[1:]}', min(sc)
+
+
+_overtime_tpl = None
+
+
+def overtime(f):
+    """the timer box says 「延長中!」: the black outline of its letters matched against work/templates/overtime.png
+    (colour-free: the box and letters are in the teams' colours). Only the letters count, outline and inside: the box
+    around them can go black (ガチアサリ: the box empties from the top as the overtime runs out)"""
+    global _overtime_tpl
+    if _overtime_tpl is None:
+        tpl = cv2.imread(os.path.join(os.path.dirname(__file__), 'templates', 'overtime.png'), 0)
+        pad = cv2.copyMakeBorder((tpl > 0).astype(np.uint8), 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=0)
+        cv2.floodFill(pad, None, (0, 0), 2)                   # outside the letters
+        _overtime_tpl = tpl.astype(np.float32), (pad[1:-1, 1:-1] != 2).astype(np.float32)
+    tpl, letters = _overtime_tpl
+    m = ((crop(f, OVERTIME).max(axis=2) < 70) * 255).astype(np.float32)
+    r = cv2.matchTemplate(m, tpl, cv2.TM_CCOEFF_NORMED, mask=letters)
+    return float(np.nan_to_num(r, nan=0.0, posinf=0.0, neginf=0.0).max()) >= OVERTIME_THR
+
+
+def timer_hud(f, glyphs):
+    """the HUD of a rule without paint points: the timer box reads as M:SS, or says 「延長中!」 -> (visible, rem, clock)"""
+    tv = cv2.cvtColor(crop(f, TIMER), cv2.COLOR_BGR2HSV)[..., 2]
+    if 0.55 < (tv < 60).mean() < 0.9:
+        rem, clock, _ = read_timer(f, glyphs)
+        if rem is not None and int(clock[2:]) < 60: return True, rem, clock   # the map / a jump over the box reads as '7:99', '0:99'...
+    return (True, None, None) if overtime(f) else (False, None, None)
 
 
 def hud_visible(f):

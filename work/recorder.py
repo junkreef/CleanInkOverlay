@@ -8,16 +8,28 @@ The engine (class Recorder) only sees frames and an app.store.Store: every DB wr
 Every sampled frame (~10 fps) is first classified: which screen is it (rule / medals / result / hud / other)?
 That runs regardless of state, so a screen is noticed whenever it appears; its content is analysed once,
 when it has been stable for a few samples. The state only says what we are accumulating:
-  IDLE        nothing; a rule screen starts a match, a result screen alone stores a match without timeline
-  WAIT_HUD    rule screen seen; waiting for the HUD at 3:00 (slot icons kept) and the first 2:59 (t0). A timer above
-              3:00 (5:00 = any rule but ナワバリ, e.g. in an イベントマッチ) is not supported yet: back to IDLE, and the
-              result is stored without a timeline, linked to the rule screen
+  IDLE        nothing; a rule screen starts a match (its rule name, a 'title' signature, picks the analysis below),
+              a result screen alone stores a match without timeline
+  WAIT_HUD    rule screen seen; waiting for the HUD at its start (3:00 for ナワバリ; slot icons kept) and the first
+              second after it (t0)
   INGAME      timer, 8 slot states, own special gauge (state + fill level), own paint points (once per second),
               killfeed name, death bubble card, own-death texts
-  WAIT_RESULT HUD gone; the medal screen and the result screen are picked up whenever they show up
+  WAIT_RESULT HUD gone; the judge screen (paint % + WIN!/LOSE...), the medal screen and the result screen are picked up
+              whenever they show up. Without a result screen (schedule change: the game goes straight back to the
+              lobby) the match keeps the judge screen's win / lose and paint %, and the own row + stage from the
+              own result panel (the 表彰 screen, work/panel.py)
 A rule screen while INGAME / WAIT_RESULT means the previous match was aborted or its result was skipped.
+
+Rules: the rule name on the rule screen decides (RULE_ANALYSIS); without one (not named yet in the Web UI, or no rule
+screen seen) the timer at the start does: 3:00 = ナワバリ, more = another rule. ナワバリ runs exactly as before.
+Any other rule ('nonturf': the ガチ rules, a new イベントマッチ rule) is a match of the length its timer starts at,
+whose HUD has no paint points: its HUD is told by the timer box (hud.timer_hud), it can go into overtime (「延長中!」,
+up to +5 min) and its % is never stored (these rules show counts / ノックアウト! where ナワバリ has the % bar). Kills,
+deaths and specials come from the same squids / killfeed / bubbles / gauge as in ナワバリ. ガチヤグラ / ガチホコ also
+read the objective's track once per second (work/objective.py: position, who holds it, each team's best), ガチエリア /
+ガチアサリ both counts, the penalties and who holds the zones / attacks (work/area.py).
 """
-import argparse, json, os, sys, time, datetime, collections
+import argparse, json, os, sys, time, datetime, collections, math
 import cv2, numpy as np
 sys.path.insert(0, os.path.dirname(__file__))
 from result_parser import parse, Glyphs, RESULT_ROWS, NAME, WEAPON, crop as rcrop, white_mask
@@ -26,8 +38,12 @@ from weapon_match import load_main_weapons, load_wiki_icons, icon_source, imread
 from weapon_icons import harvestable, lossless, group_name, HARVEST_MIN_SCORE
 from scan_screens import looks_like_rule
 from live_result_watch import looks_like_result
-from rule_screen import read_cards
+from rule_screen import read_cards, title_signature
+import objective, area
 from medals import looks_like_medals, parse_medals
+from judge import read_label, read_judge
+from counts import read_judge_counts, read_scoreboard_counts
+from panel import read_panel, learn_weapon
 import hud
 
 ROOT = os.path.join(os.path.dirname(__file__), '..')
@@ -46,6 +62,15 @@ BUB_KILLER = 0.5                  # best card score that names the killer (corre
 BUB_EVIDENCE_BELOW = 1.01         # save the best card crop + frame of bubbles scoring below this (samples/bubbles/); every bubble for now, 0.8 once live positives are collected
 RING_SECONDS = 15                 # small frames kept for evidence when an own death shows no bubble
 STABLE = {'rule': 3, 'medals': 3, 'result': 10}
+JUDGE_LABEL_MIN = 0.9             # label score that counts as a win / lose vote (the real labels score >= 0.98)
+COUNT_FIELDS = ('my_count', 'enemy_count', 'knockout', 'my_team_points', 'enemy_team_points')   # ガチルール: matches columns from work/counts.py
+JUDGE_GAP = 30.0                  # s: judge frames further apart than this belong to different matches
+RESULT_WAIT = 300.0               # s: a match ends without its result screen when nothing came for this long (after the HUD / the last judge or medal screen)
+TITLE_THR = 0.8                   # rule-name signature: the same name >= 0.91 (269 stored ナワバリ screens), ガチホコバトル vs ナワバリバトル 0.63
+RULE_ANALYSIS = {'ナワバリバトル': 'turf', 'ガチヤグラ': 'track', 'ガチホコバトル': 'track', 'ガチエリア': 'zones', 'ガチアサリ': 'zones'}   # other names: 'other'
+OVERTIME_MAX = 300                # s: overtime lasts at most 5 minutes
+OBJ_MIN_SHARE = 0.3               # an unnamed rule keeps its track / area reads when they cover this share of its HUD seconds (track on ガチエリア: 0)
+END_GRACE = 15.0                  # s without HUD after 0:00 / overtime before a non-ナワバリ match counts as over (a splat in overtime shows the map ~10 s)
 
 
 def tm(bgr, tpl):
@@ -94,6 +119,7 @@ def classify(f):
     if looks_like_rule(f): return 'rule'
     if looks_like_medals(f): return 'medals'
     if looks_like_result(f): return 'result'
+    if read_label(f)[0]: return 'judge'
     if hud.hud_visible(f): return 'hud'
     return None
 
@@ -111,7 +137,8 @@ class Recorder:
         self.medals_pending = None                            # (t, medals, image) from the last 表彰 screen
         self.ring = collections.deque()                       # (t, 480x270 frame) for the last RING_SECONDS
         self.rsp_t = None; self.prev_rsp = 0.0
-        self.unsupported = None                               # (t, ts, rule_image, clock) of a match whose rule has no timeline support
+        self.judge = []                                       # reads of the last judge screen: dict(t, result, label_score, my_pct, enemy_pct)
+        self.judge_frame = None                               # (t, frame) of its first read with both %, kept as evidence
 
     def stamp(self, t):
         return datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S') if self.source == 'live' else f'{os.path.basename(self.source)}_{t:07.1f}'
@@ -119,21 +146,25 @@ class Recorder:
     # ------------------------------------------------------------ per frame
     def process(self, f, t):
         scr = classify(f)
+        if scr is None and self.m and self.state in ('WAIT_HUD', 'INGAME') and self.m.get('analysis') != 'turf':
+            vis, rem, _ = hud.timer_hud(f, self.glyphs)       # no paint points top right: the timer box tells the HUD
+            if vis and self.state == 'INGAME' and self.m.get('nonturf') and rem is not None and abs(rem - (self.m['dur'] - (t - self.m['t0']))) > 3:
+                vis = False                                   # a time that does not fit the match: the map or a jump over the box
+            if vis and (self.m.get('nonturf') or self.m.get('analysis') or self.state == 'WAIT_HUD' and rem is not None and rem > 180): scr = 'hud'
+        if scr == 'judge' and self.state == 'INGAME' and self.m.get('nonturf'):
+            self.state = 'WAIT_RESULT'; self.t_state = t; self.log(f'[{t:8.1f}] judge screen: match over (elapsed {t - self.m["t0"]:.0f}s) -> waiting for result')   # ノックアウト: before the time is up
         self.n_scr = self.n_scr + 1 if scr == self.scr else 1; self.scr = scr
         if scr in STABLE and self.n_scr == STABLE[scr]:       # a screen has just become stable: analyse it once
             if scr == 'rule': self.on_rule(f, t)
             elif scr == 'medals': self.on_medals(f, t)
             elif scr == 'result': self.on_result(f, t)
+        if scr == 'judge': self.on_judge(f, t)
         s = self.state
         if s == 'WAIT_HUD':
             if scr == 'hud':
                 rem, clock, sc = hud.read_timer(f, self.glyphs)
-                if rem is not None and rem > 180:                 # only ナワバリ starts at 3:00; a few samples so one misread does not count
-                    self.m['n_long'] = self.m.get('n_long', 0) + 1
-                    if self.m['n_long'] >= 3:
-                        self.log(f'[{t:8.1f}] timer at {clock}: not ナワバリ, timeline not supported -> result only')
-                        self.unsupported = dict(t=t, ts=self.m['ts'], rule_image=self.m['rule_image'], clock=clock)
-                        self.state = 'IDLE'; self.m = None
+                if rem is not None and (self.m.get('nonturf') or rem > 180 or self.m.get('analysis') not in (None, 'turf')):
+                    self.start_nonturf(f, t, rem, clock)          # not ナワバリ (by its name, or its timer above 3:00)
                     return
                 if rem == 180 and len(self.m['start_patches']) < 3 and (not self.m['start_patches'] or t - self.m['start_patches'][-1][0] >= 0.4):
                     self.m['start_patches'].append((t, [hud.slot_img(f, i, 28).copy() for i in range(8)]))
@@ -145,7 +176,7 @@ class Recorder:
         elif s == 'INGAME':
             self.sample(f, t, scr == 'hud')
         elif s == 'WAIT_RESULT':
-            if t - self.t_state > 300:
+            if t - self.t_state > RESULT_WAIT:
                 self.log(f'[{t:8.1f}] no result screen, storing match without it'); self.finish(None, t)
 
     # ------------------------------------------------------------ screens
@@ -159,42 +190,111 @@ class Recorder:
     def on_medals(self, f, t):
         meds = parse_medals(f, self.lib); self.store.save_libraries()
         path = self.store.save_image(self.stamp(t), 'medals', f)
-        self.medals_pending = dict(t=t, medals=meds, image=path)
+        pn = read_panel(f, self.glyphs, self.lib)                 # the same screen's own row: kept for a match whose scoreboard is skipped
+        self.medals_pending = dict(t=t, medals=meds, image=path, panel=pn)
         self.log(f'[{t:8.1f}] MEDALS ' + (', '.join(f'{md["name"] or md["sig_id"]} ({md["rank"]} {md["score"]})' for md in meds) or 'none'))
+        self.log(f'    panel: {pn["weapon"]} p={pn["points"]} ka={pn["kills_assists"]} d={pn["deaths"]} sp={pn["specials"]} (glyphs {pn["glyph_score"]:.2f}) {pn["stage"]}')
+
+    def on_judge(self, f, t):
+        """every judge-screen frame votes: the label for win / lose, and the % when both sides read cleanly (a squid
+        or a sticker flying over a digit makes a side unreadable on some frames), or per side the count / ノックアウト!
+        and the team points (ガチルール, work/counts.py). Decided in judge_summary."""
+        if self.judge and t - self.judge[-1]['t'] > JUDGE_GAP: self.judge = []; self.judge_frame = None
+        res, lsc = read_label(f); j = read_judge(f, self.glyphs) or {}
+        c = read_judge_counts(f, self.glyphs) if not j else None
+        self.judge.append(dict(t=t, result=res, label_score=lsc, my_pct=j.get('my_pct'), enemy_pct=j.get('enemy_pct'), counts=c))
+        if (j or c and c['my']['count'] is not None and c['enemy']['count'] is not None) and self.judge_frame is None: self.judge_frame = (t, f.copy())
+
+    def judge_summary(self):
+        """-> dict(t, result, my_pct, enemy_pct, votes, pct_votes, + the COUNT_FIELDS) from the judge reads, or None.
+        % = the pair read most often, a side's count (with its ノックアウト!) and its points = the value read most often;
+        each kept when at least 2 frames agree. result = the label most often seen"""
+        J = self.judge
+        labels = collections.Counter(r['result'] for r in J if r['result'] and r['label_score'] >= JUDGE_LABEL_MIN)
+        if not labels: return None
+        result, votes = labels.most_common(1)[0]
+        pairs = collections.Counter((r['my_pct'], r['enemy_pct']) for r in J if r['my_pct'] is not None)
+        (my, en), pv = pairs.most_common(1)[0] if pairs else ((None, None), 0)
+        if pv < 2: my = en = None
+        def voted(side, keys):
+            c = collections.Counter(tuple(r['counts'][side][k] for k in keys) for r in J if r['counts'] and r['counts'][side][keys[0]] is not None)
+            v, n = c.most_common(1)[0] if c else (None, 0)
+            return v if n >= 2 else (None,) * len(keys)
+        side = {s: (*voted(s, ('count', 'ko')), *voted(s, ('points',))) for s in ('my', 'enemy')}
+        counts = count_fields({'left': dict(count=side['my'][0], ko=side['my'][1]), 'right': dict(count=side['enemy'][0], ko=side['enemy'][1])},
+                              side['my'][2], side['enemy'][2])
+        return dict(t=J[0]['t'], result=result, my_pct=my, enemy_pct=en, votes=f'{votes}/{len(J)}', pct_votes=f'{pv}/{sum(pairs.values())}', **counts)
+
+    def belongs(self, t_screen, t):
+        """a judge / medal screen seen at t_screen is this match's when it came after its rule screen (or, without one,
+        at most 400 s before the end); a skipped result screen can leave it minutes before the match is stored"""
+        t_rule = self.m.get('t_rule') if self.m else None
+        return t_screen > t_rule if t_rule is not None else t - t_screen < 400
 
     def on_result(self, f, t):
         if self.state in ('INGAME', 'WAIT_RESULT'):
             self.finish(f, t)
-        elif self.state == 'IDLE' and t - self.t_last_store > 120:      # result without a timeline: started mid-match, or a rule without support
-            u = self.unsupported if self.unsupported and t - self.unsupported['t'] < 900 else None; self.unsupported = None
+        elif self.state == 'IDLE' and t - self.t_last_store > 120:      # result without a timeline: the recorder started mid-match
             self.m = dict(t_rule=None, card_tpl=None, start_patches=[], samples=[], kf=[], bubbles=[], t0=t, notes='no rule screen')
-            if u: self.m.update(ts=u['ts'], rule_image=u['rule_image'], notes=f'timer started at {u["clock"]}: not ナワバリ, no timeline')
             self.finish(f, t)
+
+    def start_nonturf(self, f, t, rem, clock):
+        """WAIT_HUD of a rule other than ナワバリ: its length is where its timer starts (5:00 for the ガチ rules; a few reads
+        so one misread does not count), slot icons at that time, t0 at the first second after it"""
+        m = self.m
+        if not m.get('nonturf'):
+            m['n_long'] = m.get('n_long', 0) + 1
+            if m['n_long'] < 3: return
+            if m.get('analysis') == 'turf': self.log(f'[{t:8.1f}] rule name says ナワバリバトル but the timer starts at {clock}: going by the timer')
+            m.update(nonturf=True, dur=300 if m.get('analysis') in ('track', 'zones') else 60 * math.ceil(rem / 60))   # an unknown rule: its first read, to the minute
+            if m['analysis'] in (None, 'turf'): m['analysis'] = None   # unnamed: the track is looked for each second
+            self.log(f'[{t:8.1f}] timer at {clock}: {m.get("title") or "not ナワバリ"}, a {m["dur"] // 60}:00 match')
+        dur = m['dur']
+        if rem == dur and len(m['start_patches']) < 3 and (not m['start_patches'] or t - m['start_patches'][-1][0] >= 0.4):
+            m['start_patches'].append((t, [hud.slot_img(f, i, 28).copy() for i in range(8)]))
+        if rem < dur:
+            m['t0'] = t - (dur - rem)                             # rem is shown during [dur-rem, dur+1-rem) after start
+            self.state = 'INGAME'; self.t_state = t; self.log(f'[{t:8.1f}] INGAME  (t0={m["t0"]:.1f})')
 
     def start_match(self, f, t):
         ts = self.stamp(t)
         path = self.store.save_image(ts, 'rule', f)
-        self.m = dict(ts=ts, t_rule=t, rule_image=path, card_tpl=card_templates(read_cards(f)), start_patches=[], samples=[], kf=[], bubbles=[], t0=None, notes=None)
-        self.state = 'WAIT_HUD'; self.t_state = t; self.ring.clear(); self.rsp_t = None; self.unsupported = None
-        self.log(f'[{t:8.1f}] RULE SCREEN -> waiting for HUD')
+        tid, title, sc = self.lib.identify(title_signature(f), 'title', thr=TITLE_THR); self.store.save_libraries()
+        analysis = None if title is None else RULE_ANALYSIS.get(title, 'other')
+        self.m = dict(ts=ts, t_rule=t, rule_image=path, card_tpl=card_templates(read_cards(f)), start_patches=[], samples=[], kf=[], bubbles=[], t0=None, notes=None,
+                      title_id=tid, title=title, analysis=analysis)
+        self.state = 'WAIT_HUD'; self.t_state = t; self.ring.clear(); self.rsp_t = None
+        self.log(f'[{t:8.1f}] RULE SCREEN {title or tid or "(no rule name)"} ({analysis or "rule unknown: the timer decides"}) -> waiting for HUD')
 
     # ------------------------------------------------------------ in match
     def sample(self, f, t, vis):
         m = self.m
         rem, clock, _ = hud.read_timer(f, self.glyphs) if vis else (None, None, 0)
-        # a match can be aborted (connection error) and a new one started without a rule screen: timer back at 3:00
-        if vis and rem == 180 and t - m['t0'] > 30:
-            self.log(f'[{t:8.1f}] timer back at 3:00: previous match aborted, waiting for the new start (cards unknown)')
-            self.m = dict(m, card_tpl=None, start_patches=[], samples=[], kf=[], bubbles=[], kf_cands=[], kf_rows=[], pts_sec=None, t0=None, notes='restarted without rule screen')
+        dur = m.get('dur', 180)
+        # a match can be aborted (connection error) and a new one started without a rule screen: timer back at the start
+        if vis and rem == dur and t - m['t0'] > 30:
+            self.log(f'[{t:8.1f}] timer back at {dur // 60}:00: previous match aborted, waiting for the new start (cards unknown)')
+            self.m = dict(m, card_tpl=None, start_patches=[], samples=[], kf=[], bubbles=[], kf_cands=[], kf_rows=[], pts_sec=None, obj_sec=None, t0=None, notes='restarted without rule screen')
             self.state = 'WAIT_HUD'; self.t_state = t; return
         row = dict(t=t, vis=vis, rem=rem, clock=clock)
         if vis:
             row['slots'] = [hud.slot_state(f, i) for i in range(8)]
             row['g_or'], row['g_wh'] = hud.gauge_state(f); row['g_lv'] = hud.gauge_level(f)
             sec = int(t - m['t0'])                                    # paint points: first clean read of each second (~5 ms; rolling digits fail and retry next sample)
-            if m.get('pts_sec') != sec:
+            if not m.get('nonturf') and m.get('pts_sec') != sec:
                 pts, _ = hud.read_points(f, self.glyphs)
                 if pts is not None: row['pts'] = pts; m['pts_sec'] = sec
+            if m.get('nonturf'):
+                if rem is None and hud.overtime(f): row['ot'] = True; m['past_zero'] = True
+                if rem == 0: m['past_zero'] = True
+                if m.get('obj_sec') != sec:                       # once per second: the ヤグラ / ホコ track, or the エリア counts
+                    an = m.get('analysis')                        # (the next sample of the second tries again until the icon /
+                    if an == 'track' or an is None and objective.present(f):          # both counts are read)
+                        row['obj'] = objective.read(f)
+                        if row['obj']['pos'] is not None: m['obj_sec'] = sec
+                    elif an == 'zones' or an is None and area.present(f, self.glyphs):
+                        row['zone'] = area.read(f, self.glyphs)
+                        if filled(row['zone'])[0] == 2: m['obj_sec'] = sec
             self.killfeed(f, t)
         bub = hud.crop(f, hud.BUBBLE)
         row['bub'] = tm(bub, self.tpl_yar) if (bub.max(axis=2) < 60).mean() > 0.3 else 0.0
@@ -211,7 +311,9 @@ class Recorder:
         self.evidence(f, t, row['rsp'])
         elapsed = t - m['t0']
         last_vis = max((r['t'] for r in m['samples'] if r['vis']), default=t)
-        if (rem == 0 and t - last_vis > 2) or (elapsed > 150 and t - last_vis > 8) or t - last_vis > 60:
+        if not m.get('nonturf'): over = (rem == 0 and t - last_vis > 2) or (elapsed > 150 and t - last_vis > 8)
+        else: over = t - last_vis > (END_GRACE if m.get('past_zero') else 8) and elapsed > dur - 30   # overtime may follow 0:00
+        if over or t - last_vis > 60:
             self.state = 'WAIT_RESULT'; self.t_state = t; self.log(f'[{t:8.1f}] match over (elapsed {elapsed:.0f}s) -> waiting for result')
 
     def evidence(self, f, t, rsp):
@@ -318,21 +420,33 @@ class Recorder:
             res = parse(f, self.icons, self.glyphs, self.lib); self.store.save_libraries()
             if not result_sane(res):
                 self.log(f'[{t:8.1f}] result screen did not parse sanely (self row / weapons / points) - discarded')
-                if m.get('t0') is None or not m['samples']:            # nothing else to keep
+                if not m.get('nonturf') and (m.get('t0') is None or not m['samples']):   # nothing else to keep (other rules: the judge / panel may be)
                     self.m = None; return
                 res = None; f = None
+            else:
+                res['counts'] = read_scoreboard_counts(f, self.glyphs)   # ガチルール; all None on a ナワバリ scoreboard
         m['ts'] = ts
         if f is not None:
             if not self.dry: self.harvest_icons(f, res, ts)
             result_image = self.store.save_image(ts, 'result', f)
             for row, y in zip(res['rows'], RESULT_ROWS.values()):
                 row['name_sig'] = signature(rcrop(f, NAME, y))          # raw look of the name, matched against killfeed rows below (not stored, not identified)
-        medals = []; medal_image = None
-        if self.medals_pending and t - self.medals_pending['t'] < 120:
-            medals = self.medals_pending['medals']; medal_image = self.medals_pending['image']; self.medals_pending = None
-        match, players, events, timeline = self.build_record(res, t, result_image)
+        medals = []; medal_image = None; panel = None
+        if self.medals_pending and self.belongs(self.medals_pending['t'], t):
+            medals = self.medals_pending['medals']; medal_image = self.medals_pending['image']; panel = self.medals_pending['panel']
+        self.medals_pending = None
+        judge = self.judge_summary() if self.judge and self.belongs(self.judge[0]['t'], t) else None
+        judge_frame = self.judge_frame; self.judge = []; self.judge_frame = None
+        if m.get('nonturf') and not res and not judge and not panel:
+            self.log(f'[{t:8.1f}] no judge screen, result panel or result screen: match not stored'); self.m = None; return
+        match, players, events, timeline = self.build_record(res, t, result_image, None if res else panel)
         match['medal_image'] = medal_image
-        self.log(f'[{t:8.1f}] MATCH {match["result"]} {match["stage"]} {match["my_pct"]}-{match["enemy_pct"]}  players={len(players)} events={len(events)} medals={len(medals)}')
+        if judge: self.use_judge(match, judge, judge_frame, ts)
+        if panel and res: self.check_panel(panel, res)
+        elif panel and players:
+            match['notes'] = '; '.join(x for x in (match['notes'], 'own row and stage from the result panel') if x)
+        counts = f' counts {"/".join(str(match[k]) for k in COUNT_FIELDS)}' if any(match[k] is not None for k in COUNT_FIELDS) else ''
+        self.log(f'[{t:8.1f}] MATCH {match["result"]} {match["stage"]} {match["my_pct"]}-{match["enemy_pct"]}{counts}  players={len(players)} events={len(events)} medals={len(medals)}')
         for p in sorted(players, key=lambda p: p['slot']):
             self.log(f'    slot{p["slot"]} {p["team"]:5s}{"*" if p["is_self"] else " "} {str(p["weapon"]):20s} p={p["points"]} ka={p["kills_assists"]} d={p["deaths"]} sp={p["specials"]} link={p["link_score"]}')
         for e in events:
@@ -349,9 +463,42 @@ class Recorder:
         if not self.dry:
             mid = self.store.insert_match(match, players, events, medals, timeline); self.log(f'    -> db match id {mid}')
         self.t_last_store = t
-        self.store.save_json(ts, '', dict(match=match, players=players, events=events, medals=medals, timeline=timeline))
+        self.store.save_json(ts, '', dict(match=match, players=players, events=events, medals=medals, timeline=timeline, judge=judge,
+                                          panel={k: v for k, v in panel.items() if k != 'weapon_sig'} if panel else None))
         if self.debug: self.store.save_json(ts, '_samples', m['samples'])
         self.m = None
+
+    def check_panel(self, panel, res):
+        """with the scoreboard: compare the panel's own row with it (log) and teach the library the panel's weapon icon"""
+        me = next((r for r in res['rows'] if r['self']), None)
+        if not me: return
+        want = (me['weapon'], *(to_int(me[k]) for k in ('points', 'kills', 'deaths', 'specials')), res['stage'], res['mode'], res['rule'])
+        got = (panel['weapon'] or me['weapon'], *(panel[k] for k in ('points', 'kills_assists', 'deaths', 'specials')), panel['stage'], panel['mode'], panel['rule'])
+        self.log('    panel check: ' + ('same as the result screen' if got == want else f'MISMATCH, panel {got} / result {want}'))
+        if me['weapon'] and (me['weapon_score'] or 0) >= HARVEST_MIN_SCORE and learn_weapon(self.lib, panel['weapon_sig'], me['weapon']):
+            self.store.save_libraries(); self.log(f'    panel weapon icon learnt: {me["weapon"]}')
+
+    def use_judge(self, match, judge, frame, ts):
+        """without a result screen the judge screen gives win / lose and the % (or the counts); with one, the two are
+        compared (log), a count the scoreboard did not read is taken from the judge, and a disagreement keeps the judge
+        frame for a look"""
+        keys = ('result', 'my_pct', 'enemy_pct') + COUNT_FIELDS
+        got = tuple(judge[k] for k in keys)
+        self.log(f'    judge screen: {got[0]} {got[1]}-{got[2]} counts {"/".join(map(str, got[3:]))} (label votes {judge["votes"]}, % votes {judge["pct_votes"]})')
+        if match['result'] is None:
+            match.update({k: judge[k] for k in keys})
+            what = 'counts' if judge['my_count'] is not None or judge['enemy_count'] is not None else '%'
+            match['notes'] = '; '.join(x for x in (match['notes'], f'no result screen: result and {what} from the judge screen') if x)
+            if frame: self.store.save_image(ts, 'judge', frame[1])
+            return
+        filled = [k for k in COUNT_FIELDS if match[k] is None and judge[k] is not None]
+        match.update({k: judge[k] for k in filled})
+        if filled: self.log(f'    from the judge screen (not read on the result screen): {", ".join(filled)}')
+        if got[:3] != tuple(match[k] for k in keys[:3]) or any(judge[k] is not None and judge[k] != match[k] for k in COUNT_FIELDS):
+            self.log(f'    judge check: MISMATCH, result screen says {match["result"]} {match["my_pct"]}-{match["enemy_pct"]} counts {"/".join(str(match[k]) for k in COUNT_FIELDS)}')
+            if frame: self.log(f'      -> {self.store.save_image(ts, "judge", frame[1])}')
+        else:
+            self.log('    judge check: same as the result screen')
 
     def bubble_evidence(self, ts):
         """log each bubble's best card score (and runner-up); below BUB_EVIDENCE_BELOW save the best crop next to the
@@ -364,7 +511,9 @@ class Recorder:
                 p = self.store.save_bubble(f'{ts}_{b["t"] - t0:05.1f}s_card{best[0]:.2f}_2nd{second[0]:.2f}', np.hstack([b['crop'], b['frame']]))
                 self.log(f'      -> {p}')
 
-    def build_record(self, res, t_end, result_image):
+    def build_record(self, res, t_end, result_image, panel=None):
+        """panel (only without a scoreboard): the own row from the result panel; its slot is found by the panel's
+        weapon among the ally HUD icons at 3:00, so it needs a learnt weapon icon and the match start"""
         m = self.m; t0 = m['t0']
         # --- timeline from HUD samples
         S = m['samples']; dt = 0.1
@@ -396,6 +545,16 @@ class Recorder:
                                     points=to_int(r['points']), kills_assists=to_int(r['kills']), deaths=to_int(r['deaths']), specials=to_int(r['specials']),
                                     result_row=ri % 4, link_score=round(scores[s].get(r['weapon'], 0.0), 3) if m['start_patches'] else None))   # NULL = slot order is arbitrary (no match start seen)
                 if r['self']: self_slot = s
+        elif panel and panel['weapon'] and (m['start_patches'] or m.get('nonturf')):
+            self_slot = 0; link = None                            # no HUD seen at the start: the slot order is arbitrary (as without a match start above)
+            if m['start_patches']:
+                scores = {s: max(hud.slot_weapon_scores_patch(p[s], {panel['weapon']}, self.icons_big).get(panel['weapon'], 0.0) for _, p in m['start_patches'])
+                          for s in range(4)}
+                self_slot = max(scores, key=lambda s: scores[s] - 0.05 * abs(hud_deaths.get(s, 0) - (panel['deaths'] or 0)))   # death counts break ties, as in assign()
+                link = round(scores[self_slot], 3)
+            players.append(dict(slot=self_slot, team='ally', is_self=1, weapon=panel['weapon'], weapon_score=None, weapon_conf=None,
+                                points=panel['points'], kills_assists=panel['kills_assists'], deaths=panel['deaths'], specials=panel['specials'],
+                                result_row=None, link_score=link))
         # --- events
         events = []
         def clock_at(t):
@@ -414,38 +573,114 @@ class Recorder:
                 best = max(((float(np.corrcoef(k['sig'], r['name_sig'])[0, 1]) if r['name_sig'] is not None else -1), ri) for ri, r in enumerate(rows))
                 row_slot = {v: kk for kk, v in slot_row.items()}
                 ev(k['t'], 'kill', slot=self_slot, target=row_slot.get(best[1]) if best[0] >= 0.5 else None, source='killfeed', conf=round(best[0], 2))
+        elif self_slot is not None:                               # own row from the result panel: kills without their target
+            for k in m['kf']: ev(k['t'], 'kill', slot=self_slot, source='killfeed')
+        if res or self_slot is not None:
             for b in m['bubbles']:                                # own deaths with killer: bubble card -> rule card -> slot (best frame, scored in sample())
                 best = b['best']
                 ev(b['t'], 'killed_by', slot=self_slot, target=best[1] if best and best[0] > BUB_KILLER else None, source='bubble', conf=round(best[0], 2) if best else None)
         events.sort(key=lambda e: e['t_ms'])
         started = (datetime.datetime.now() - datetime.timedelta(seconds=t_end - t0)) if self.source == 'live' else video_time(self.source, t0)
-        match = dict(started_at=started.isoformat(timespec='seconds'), ended_at=None, mode=res['mode'] if res else None, rule=res['rule'] if res else None,
-                     stage=res['stage'] if res else None, result=res['self_result'] if res else None,
-                     my_pct=pct(res, True), enemy_pct=pct(res, False), duration_s=round(max((r['t'] for r in S if r['vis']), default=t0) - t0, 1) if S else None,
+        banner = res or panel or {}                               # mode / rule / stage: the scoreboard's banner, else the panel's (same banner)
+        cf = dict.fromkeys(COUNT_FIELDS)                          # ガチルール: count / ノックアウト! (header, left = my team) and the WIN! / LOSE... rows' points
+        if res and res.get('counts'):
+            c = res['counts']; mine, theirs = ('win_points', 'lose_points') if res['self_result'] != 'lose' else ('lose_points', 'win_points')
+            cf = count_fields(c, c[mine], c[theirs])
+        rule = banner.get('rule') or m.get('title')                # the scoreboard's banner, else the rule screen's name
+        turf = not m.get('nonturf') and rule in (None, 'ナワバリバトル')   # only ナワバリ has the % bar; the others show counts / ノックアウト! there
+        raw = strip(res) if res else dict(panel={k: v for k, v in panel.items() if k != 'weapon_sig'}) if panel else None
+        if m.get('title_id'): raw = dict(raw or {}, title_id=m['title_id'])   # lets a later name of the rule screen fill rule
+        match = dict(started_at=started.isoformat(timespec='seconds'), ended_at=None, mode=banner.get('mode'), rule=rule,
+                     stage=banner.get('stage'), result=res['self_result'] if res else None,
+                     my_pct=pct(res, True) if turf else None, enemy_pct=pct(res, False) if turf else None, duration_s=round(max((r['t'] for r in S if r['vis']), default=t0) - t0, 1) if S else None,
                      source='live' if self.source == 'live' else os.path.basename(self.source), rule_image=m.get('rule_image'), result_image=result_image,
-                     raw_json=json.dumps(strip(res), ensure_ascii=False) if res else None, notes=m.get('notes'))
-        return match, players, events, timeline_rows(S, t0)
+                     raw_json=json.dumps(raw, ensure_ascii=False) if raw else None,   # the *_id let a later label fill stage / mode / rule
+                     notes=m.get('notes'), **cf)
+        secs = {int(r['t'] - t0) for r in S if r['vis']}
+        keep = {k for k, an in (('obj', 'track'), ('zone', 'zones'))          # a rule not named yet: the track / area seen most of the match
+                if m.get('analysis') == an or sum(k in r for r in S) >= OBJ_MIN_SHARE * len(secs)}
+        return match, players, events, timeline_rows(S, t0, m.get('dur', 180) + (OVERTIME_MAX if m.get('nonturf') else 0), keep)
 
 
-def timeline_rows(S, t0):
+def timeline_rows(S, t0, max_s=180, keep=('obj', 'zone')):
     """per second since the timer start, from HUD-visible samples: points = first clean read in that second (a read
     that breaks the non-decreasing count against both neighbours is dropped), gauge = median fill 0..1, ready = the
-    ring was white in any sample. Seconds without a visible HUD (map open, transitions) get no row."""
+    ring was white in any sample; ヤグラ / ホコ: the track's read of that second (obj_pos, obj_holder) and each team's
+    best (best_series); ガチエリア: both counts (best_series: they only grow), whose box is lit (obj_holder) and both
+    penalties (penalty_series);
+    overtime = 「延長中!」 in any sample. Seconds without a visible HUD (map open, transitions) get no row."""
     secs = {}
     for r in S:
         if not r['vis'] or 'g_lv' not in r: continue
         k = int(r['t'] - t0)
-        if not 0 <= k <= 180: continue
-        d = secs.setdefault(k, dict(lv=[], ready=False, pts=None))
+        if not 0 <= k <= max_s: continue
+        d = secs.setdefault(k, dict(lv=[], ready=False, pts=None, obj=None, zone=None, ot=False))
         d['lv'].append(r['g_lv']); d['ready'] = d['ready'] or r['g_wh'] >= hud.READY_WHITE
         if d['pts'] is None and 'pts' in r: d['pts'] = r['pts']
+        for key in keep:                                          # the sample of the second that read the most (a named rule
+            if key in r and (d[key] is None or filled(r[key]) > filled(d[key])): d[key] = r[key]   # reads every sample)
+        d['ot'] = d['ot'] or r.get('ot', False)
     ks = [k for k in sorted(secs) if secs[k]['pts'] is not None]
     for i, k in enumerate(ks):                                    # single misreads: outside [previous, next] while previous <= next
         prev = secs[ks[i - 1]]['pts'] if i else 0; nxt = secs[ks[i + 1]]['pts'] if i + 1 < len(ks) else None
         v = secs[k]['pts']
         if v < prev or (nxt is not None and prev <= nxt < v): secs[k]['pts_bad'] = True
-    return [dict(t_s=k, points=None if d.get('pts_bad') else d['pts'], gauge=round(float(np.median(d['lv'])), 3), ready=int(d['ready']))
-            for k, d in sorted(secs.items())]
+    ks = sorted(secs)
+    best = {key: best_series([secs[k][src][key] if secs[k][src] else None for k in ks])
+            for src, key in (('obj', 'my_best'), ('obj', 'enemy_best'), ('zone', 'my_count'), ('zone', 'enemy_count'))}
+    pen = {key: penalty_series([secs[k]['zone'].get(key) if secs[k]['zone'] else None for k in ks],
+                               [secs[k]['zone'] is not None and secs[k]['zone'][count] is not None for k in ks])
+           for key, count in (('my_penalty', 'my_count'), ('enemy_penalty', 'enemy_count'))}
+    holder = lambda d: d['obj']['holder'] if d['obj'] else d['zone']['holder'] if d['zone'] else None
+    return [dict(t_s=k, points=None if d.get('pts_bad') else d['pts'], gauge=round(float(np.median(d['lv'])), 3), ready=int(d['ready']),
+                 obj_pos=d['obj']['pos'] if d['obj'] else None, obj_holder=holder(d), my_best=best['my_best'][i], enemy_best=best['enemy_best'][i],
+                 my_count=None if best['my_count'][i] is None else int(best['my_count'][i]),
+                 enemy_count=None if best['enemy_count'][i] is None else int(best['enemy_count'][i]),
+                 my_penalty=pen['my_penalty'][i], enemy_penalty=pen['enemy_penalty'][i], overtime=int(d['ot']))
+            for i, (k, d) in enumerate((k, secs[k]) for k in ks)]
+
+
+def filled(read):
+    """how good a track / area read is: the icon position / both counts read first, then anything else read"""
+    return (sum(read.get(k) is not None for k in ('pos', 'my_count', 'enemy_count')), sum(v is not None for v in read.values()))
+
+
+def best_series(vals, win=3):
+    """a team's best on the track can only grow: the median of the last `win` reads (one misread - something over a dot -
+    does not count; a real step shows a second later), then the running maximum. None where nothing was read (yet)"""
+    have = [i for i, v in enumerate(vals) if v is not None]
+    out = [None] * len(vals); top = None
+    for n, i in enumerate(have):
+        m = float(np.median([vals[j] for j in have[max(0, n - win + 1):n + 1]])); top = m if top is None else max(top, m)
+        out[i] = round(top, 1)
+    return out
+
+
+def penalty_series(vals, counted, gap=3):
+    """a team's ガチエリア penalty per second from the 「+N」 reads: up to `gap` unread seconds before the next read keep
+    the last value (something over the pill); longer, or with no read after, it is 0 (no pill: nothing to pay) where that
+    team's count was read, else None. Then the median with both neighbours drops a single misread"""
+    n = len(vals); out = list(vals); last = None; i = 0
+    while i < n:
+        if vals[i] is not None: last = vals[i]; i += 1; continue
+        j = i
+        while j < n and vals[j] is None: j += 1
+        for k in range(i, j):
+            out[k] = last if last is not None and j < n and j - i <= gap else 0 if counted[k] else None
+        i = j
+    sm = list(out)
+    for i in range(n):
+        w = [out[k] for k in (i - 1, i, i + 1) if 0 <= k < n and out[k] is not None]
+        if out[i] is not None and len(w) == 3: sm[i] = int(np.median(w))
+    return sm
+
+
+def count_fields(c, my_points, enemy_points):
+    """matches columns from both sides' counts (c['left'] = my team, c['right'] = the enemy, dict(count, ko) each):
+    knockout 1 when a side shows ノックアウト!, 0 when both show a count, None when unknown"""
+    l, r = c['left'], c['right']
+    ko = 1 if l['ko'] or r['ko'] else 0 if l['count'] is not None and r['count'] is not None else None
+    return dict(my_count=l['count'], enemy_count=r['count'], knockout=ko, my_team_points=my_points, enemy_team_points=enemy_points)
 
 
 def result_sane(res):

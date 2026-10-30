@@ -10,7 +10,8 @@ REST  (all JSON)
   GET  /api/matches?limit=&offset=        newest first, with my row
   GET  /api/matches/{id}                  match + players + events + medals
   DELETE /api/matches/{id}
-  GET  /api/stats                         the SQL views (weapon / stage / enemy weapon / medal / timeline)
+  GET  /api/stats?since=&mode=            the stat tables (overview / weapon / stage / enemy weapon / medal / timeline / daily)
+                                          + newest results; since = 'all' (default), 'today', 'session', '7d', ISO time
   GET  /api/signatures/unlabelled         stage / medal signatures without a label (+ where they were seen)
   POST /api/signatures/label {id,label};   POST /api/signatures/prune   drop unlabelled signatures no saved screen shows
   GET  /api/weapon_icons/unknown          weapon icons matching no template, one group per look (+ samples, where seen)
@@ -32,7 +33,7 @@ recorder running elsewhere, from a 1 s watch on the newest match id.
 import argparse, asyncio, os, sys, json, time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -136,8 +137,10 @@ def api_delete_match(mid: int):
 
 
 @app.get('/api/stats')
-def api_stats():
-    return store().stats()
+def api_stats(since: str | None = None, mode: str | None = None, rule: str | None = None):
+    """since: omitted / 'all' = every match, else as the overlay's (ISO time, 'today', 'session', 'Nd');
+    rule: a rule name, or '@gachi' for every ガチ rule"""
+    return store().stats(None if since in (None, '', 'all') else resolve_since(since), mode or None, rule or None)
 
 
 @app.get('/api/signatures/unlabelled')
@@ -223,9 +226,11 @@ OVERLAY_HTML = os.path.join(ROOT, 'web', 'overlay.html')
 
 def resolve_since(since: str | None):
     """query value -> ISO local time or None (= all matches)"""
-    if since is None or since == '': return state['session_start']
+    if since is None or since in ('', 'session'): return state['session_start']
     if since == 'all': return None
     if since == 'today': return time.strftime('%Y-%m-%dT00:00:00')
+    if since[:-1].isdigit() and since.endswith('d'):                  # '7d' = today and the 6 days before it
+        return time.strftime('%Y-%m-%dT00:00:00', time.localtime(time.time() - (int(since[:-1]) - 1) * 86400))
     return since
 
 
@@ -252,7 +257,9 @@ def api_overlay_session(body: SessionStart):
 @app.get('/overlay')
 def overlay_page():
     if not os.path.exists(OVERLAY_HTML): raise HTTPException(404, 'web/overlay.html is missing')
-    return FileResponse(OVERLAY_HTML, media_type='text/html')
+    with open(OVERLAY_HTML, encoding='utf-8') as fh: html = fh.read()
+    html = html.replace('<meta name="adobe-fonts-kit" content="">', f'<meta name="adobe-fonts-kit" content="{config.adobe_fonts_kit()}">', 1)
+    return HTMLResponse(html)
 
 
 @app.get('/files/{path:path}')
