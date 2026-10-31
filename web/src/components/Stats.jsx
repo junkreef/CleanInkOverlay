@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { api, subscribe } from '../api.js'
+import { api, clockLabel, subscribe } from '../api.js'
 
 const PERIODS = [['all', '全期間'], ['30d', '30 日'], ['7d', '7 日'], ['today', '今日'], ['session', '配信セッション']]
 const EVENT_LABEL = { kill: 'たおした', killed_by: 'やられた', death: 'デス' }
@@ -183,7 +183,7 @@ function EnemyWeapons({ rows }) {
   )
 }
 
-export default function Stats() {
+export default function Stats({ sessionStart }) {
   const [filter, setFilter] = useState(() => ({ since: 'all', mode: '', rule: '', ...loadFilter() }))
   const [s, setS] = useState(null)
   const [err, setErr] = useState(null)
@@ -191,6 +191,7 @@ export default function Stats() {
   const load = () => api(query).then((d) => { setS(d); setErr(null) }).catch((e) => setErr(String(e)))
   useEffect(() => { load(); saveFilter(filter) }, [query])
   useEffect(() => subscribe((m) => { if (m.type === 'match_saved' || m.type === 'match_deleted') load() }), [query])
+  useEffect(() => { if (s && filter.since === 'session') load() }, [sessionStart])
   const set = (k, v) => setFilter({ ...filter, [k]: v })
 
   // kill / death counts per 30 s window, one row per window
@@ -212,7 +213,7 @@ export default function Stats() {
     <section className="dash">
       <div className="filters">
         <div className="seg">
-          {PERIODS.map(([k, label]) => <button key={k} className={filter.since === k ? 'on' : ''} onClick={() => set('since', k)}>{label}</button>)}
+          {PERIODS.map(([k, label]) => <button key={k} className={filter.since === k ? 'on' : ''} onClick={() => set('since', k)}>{label}{k === 'session' && sessionStart ? <small> {clockLabel(sessionStart)}〜</small> : null}</button>)}
         </div>
         <label>モード <select value={filter.mode} onChange={(e) => set('mode', e.target.value)}>
           <option value="">すべて</option>

@@ -249,6 +249,10 @@ class SessionStart(BaseModel):
 
 @app.post('/api/overlay/session')
 def api_overlay_session(body: SessionStart):
+    if body.start:
+        try: future = time.mktime(time.strptime(body.start, '%Y-%m-%dT%H:%M:%S')) > time.time()
+        except ValueError: future = True
+        if future: raise HTTPException(400, '開始時刻が不正です')
     state['session_start'] = body.start or time.strftime('%Y-%m-%dT%H:%M:%S')
     push({'type': 'session', 'start': state['session_start']})
     return {'session_start': state['session_start']}

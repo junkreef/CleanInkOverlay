@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react'
-import { api, post, subscribe } from './api.js'
+import React, { useEffect, useRef, useState } from 'react'
+import { api, clockLabel, post, subscribe } from './api.js'
 import MatchList from './components/MatchList.jsx'
 import MatchDetail from './components/MatchDetail.jsx'
 import Stats from './components/Stats.jsx'
 import Signatures from './components/Signatures.jsx'
+import SessionPicker from './components/SessionPicker.jsx'
 
 const TABS = [['matches', '試合'], ['stats', '統計'], ['signatures', '未知のステージ・表彰']]
 
@@ -47,12 +48,48 @@ function RecorderPanel({ recorder, onChange }) {
   )
 }
 
+// the start of the 配信セッション in the header; click opens the picker, Esc / outside click closes it
+function SessionChip({ start, conn, matchCount, onApply }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  useEffect(() => {
+    if (!open) return
+    const down = (e) => { if (!ref.current?.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', down)
+    return () => document.removeEventListener('mousedown', down)
+  }, [open])
+  return (
+    <div className="session" ref={ref}>
+      <span className={`sess ${conn ? '' : 'off'}`} onClick={() => setOpen(!open)} title={conn ? '配信セッションの開始時刻。クリックで変更' : '切断中'}>
+        セッション {start ? `${clockLabel(start)}〜` : '-'}
+      </span>
+      {open && <SessionPicker start={start} conn={conn} matchCount={matchCount} onApply={onApply} onClose={() => setOpen(false)} />}
+    </div>
+  )
+}
+
 export default function App() {
   const [r, setR] = useState(route())
   const [summary, setSummary] = useState(null)
   const [conn, setConn] = useState(false)
   const [recorder, setRecorder] = useState(null)
   const [toast, setToast] = useState(null)
+  const [sessionStart, setSessionStart] = useState(null)
+  const session = useRef(null)                                  // the same, for the WebSocket handler
+  const toastTimer = useRef(null)
+
+  const flash = (text, ms = 4000, action = null) => {
+    clearTimeout(toastTimer.current); setToast({ text, action })
+    toastTimer.current = setTimeout(() => setToast(null), ms)
+  }
+  const showSession = (iso) => { session.current = iso; setSessionStart(iso) }
+  const undoTo = (prev) => ({ label: '元に戻す', run: () => post('/api/overlay/session', { start: prev }).then((v) => { showSession(v.session_start); flash(`配信セッションを ${clockLabel(prev)} に戻しました`) }).catch((e) => flash(`変更できませんでした: ${e.message}`, 6000)) })
+  const changeSession = async (iso) => {
+    const prev = session.current
+    const v = await post('/api/overlay/session', iso ? { start: iso } : {})
+    showSession(v.session_start)
+    flash(`配信セッションを ${clockLabel(v.session_start)} から数え直しました`, 8000, prev ? undoTo(prev) : null)
+  }
 
   useEffect(() => {
     const onHash = () => setR(route())
@@ -64,11 +101,18 @@ export default function App() {
   useEffect(() => { refreshSummary() }, [r.tab])
 
   useEffect(() => subscribe((msg) => {
-    if (msg.type === 'connected') { setConn(true); api('/api/recorder').then(setRecorder).catch(() => {}) }
+    if (msg.type === 'connected') {
+      setConn(true); api('/api/recorder').then(setRecorder).catch(() => {})
+      api('/api/overlay?limit=1').then((d) => {                 // a reconnect with another start: the backend restarted (the start is not stored)
+        const prev = session.current; showSession(d.session_start)
+        if (prev && prev !== d.session_start) flash(`バックエンドが再起動したためセッションは ${clockLabel(d.session_start)} からになっています`, 8000, undoTo(prev))
+      }).catch(() => {})
+    }
     if (msg.type === 'disconnected') setConn(false)
     if (msg.type === 'hello') setRecorder(msg.recorder)
     if (msg.type === 'recorder') setRecorder(msg)
-    if (msg.type === 'match_saved') { setToast(`試合 #${msg.id} を記録しました`); refreshSummary(); setTimeout(() => setToast(null), 6000) }
+    if (msg.type === 'session') showSession(msg.start)
+    if (msg.type === 'match_saved') { flash(`試合 #${msg.id} を記録しました`, 6000); refreshSummary() }
     if (msg.type === 'signatures_changed') refreshSummary()
   }), [])
 
@@ -94,15 +138,15 @@ export default function App() {
         <div className="status">
           {summary && <span>{summary.matches} 試合 / {summary.wins} 勝</span>}
           <a className="overlay-link" href="/overlay" target="_blank" rel="noopener" title="OBS のブラウザソースに貼る URL (1920x1080)">配信UI</a>
-          <button className="secondary small" title="配信オーバーレイの「セッション戦績」を今から数え直す" onClick={() => post('/api/overlay/session', {}).then((r) => { setToast(`配信セッションを ${r.session_start.slice(11, 16)} から開始`); setTimeout(() => setToast(null), 4000) })}>セッション開始</button>
+          <SessionChip start={sessionStart} conn={conn} matchCount={summary?.matches} onApply={changeSession} />
           <span className={`dot ${conn ? 'on' : 'off'}`} title={conn ? '接続中' : '切断'} />
           <RecorderPanel recorder={recorder} onChange={setRecorder} />
         </div>
       </header>
-      {toast && <div className="toast">{toast}</div>}
+      {toast && <div className="toast">{toast.text}{toast.action && <button onClick={toast.action.run}>{toast.action.label}</button>}</div>}
       <main>
         {r.tab === 'matches' && (r.id ? <MatchDetail id={r.id} /> : <MatchList />)}
-        {r.tab === 'stats' && <Stats />}
+        {r.tab === 'stats' && <Stats sessionStart={sessionStart} />}
         {r.tab === 'signatures' && <Signatures />}
       </main>
     </div>
