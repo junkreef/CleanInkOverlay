@@ -5,8 +5,7 @@ import cv2, numpy as np, sys, os, time
 sys.path.insert(0, os.path.dirname(__file__))
 from live_result_watch import looks_like_result
 from result_parser import dark_share
-
-CARD_TOPS = [285, 435, 585, 735]; CARD_X = {'ally': 10, 'enemy': 1450}
+from rule_screen import CARD_X, card_tops
 
 def looks_like_rule(f):
     """any rule: only the layout is checked, never the rule name"""
@@ -16,9 +15,9 @@ def looks_like_rule(f):
     # (「ツキイチ・イベントマッチ」) takes that place and pushes it 70 px down (dark 0.15 at 685, 0.5+ at 755)
     if max(dark_share(f[y:y + 45, 700:1210], 40) for y in (685, 755)) < 0.45: return False
     # cards carry a '#nnnn' at their bottom-left (white on dark cards, dark brown on bright ones): count contrasty ones
-    ok = 0
+    ok = 0; tops = card_tops(f)
     for x0 in CARD_X.values():
-        for t in CARD_TOPS:
+        for t in tops:
             g = cv2.cvtColor(f[t + 118:t + 142, x0 + 12:x0 + 75], cv2.COLOR_BGR2GRAY)
             ok += np.percentile(g, 98) - np.percentile(g, 2) >= 100
     return ok >= 6

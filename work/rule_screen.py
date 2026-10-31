@@ -5,10 +5,15 @@ matched against the death bubble during the match to find who killed the player.
 The rule name stands in the middle, in big white letters on a black ink splat under a 「ルール」 tag (two lines,
 e.g. ナワバリ / バトル, ガチ / ヤグラ; the one-line catchphrase under it is left out). title_signature() reads it like
 the result banner (signature kind 'title', named once in the Web UI); the recorder picks the analysis by that name.
+In a フェスマッチ each card has its player's rank and team above it (「ふつうのナイト派」), so the cards stand further
+apart (FEST_CARD_TOPS). card_tops() tells the two layouts by that text.
 """
 import cv2, numpy as np, os, sys
 
 CARD_TOPS = [285, 435, 585, 735]; CARD_X = {'ally': 10, 'enemy': 1450}; CARD_W, CARD_H = 460, 135
+FEST_CARD_TOPS = [195, 395, 595, 795]   # killer bubbles score best here (of ±8 px, 4 bubbles of 2026-10-31: 0.91-0.96), x as usual
+FEST_TEAM = ((158, 194, 20, 225), (158, 194, 1635, 1885))   # y0, y1, x0, x1: the first text of each column, above the top cards
+FEST_TEAM_MIN = 0.06              # share of white px on the black outline: 0.13-0.19 on 3 フェスマッチ screens, <= 0.03 on 310 others
 ID_BAND = (118, 142, 12, 75)      # '#nnnn'
 STAGE_TEXT = (990, 1050, 1500, 1900)
 TITLE = (380, 625, 740, 1180)     # y0, y1, x0, x1: both lines of the rule name (y 387-610 measured), centred around x 960
@@ -16,17 +21,27 @@ TITLE_SCALE = 0.25                # signature = the masked canvas at quarter res
 TITLE_MIN_PX = 400                # fewer white px = no rule name there (a two-line name has several thousand)
 
 
-def card_rect(f, team, i):
-    t, x0 = CARD_TOPS[i], CARD_X[team]
+def card_tops(f):
+    """the top of each row of cards: FEST_CARD_TOPS when the text above the cards is there on both sides"""
+    for y0, y1, x0, x1 in FEST_TEAM:
+        reg = f[y0:y1, x0:x1]
+        m = (reg.min(axis=2) > 200) & (reg.max(axis=2).astype(int) - reg.min(axis=2).astype(int) < 40)
+        m &= cv2.dilate((reg.max(axis=2) < 70).astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+        if m.mean() < FEST_TEAM_MIN: return CARD_TOPS
+    return FEST_CARD_TOPS
+
+
+def card_rect(f, team, i, tops):
+    t, x0 = tops[i], CARD_X[team]
     return f[t:t + CARD_H, x0:x0 + CARD_W]
 
 
 def read_cards(f):
     """-> list of 8 dicts in HUD slot order: team, slot, card (BGR crop), id_crop"""
-    out = []
+    out = []; tops = card_tops(f)
     for team in ('ally', 'enemy'):
         for i in range(4):
-            c = card_rect(f, team, i)
+            c = card_rect(f, team, i, tops)
             out.append(dict(team=team, slot=len(out), card=c.copy(),
                             id_crop=c[ID_BAND[0]:ID_BAND[1], ID_BAND[2]:ID_BAND[3]].copy()))
     return out

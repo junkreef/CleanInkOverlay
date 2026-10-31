@@ -269,3 +269,13 @@ def test_the_map_hides_the_hud_at_every_phase():
         assert on_map and not any(r['vis'] for r in S if t_open <= r['t'] <= last + 0.15), phase
         assert all(r['vis'] for r in S if r['t'] < t_open or r['t'] > last + 0.25), phase
         assert not set(on_map) & set(seen), phase                     # nor the killfeed: 「スタート地点」 at the bottom reads as a kill
+
+
+def test_fest_cards_stand_further_apart():
+    from rule_screen import card_tops, read_cards, CARD_TOPS, FEST_CARD_TOPS
+    fest = frame('fest_rule.png')
+    assert R.looks_like_rule(fest) and card_tops(fest) == FEST_CARD_TOPS
+    assert card_tops(RULE_FRAME) == CARD_TOPS
+    rec_cards = R.card_templates(read_cards(fest))
+    score, slot = R.card_scores(frame('fest_bubble_slot7.jpg'), rec_cards)[0]
+    assert slot == 7 and score > R.BUB_KILLER                            # 0.41 on the wrong slot with the usual positions
