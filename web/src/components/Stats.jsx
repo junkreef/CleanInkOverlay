@@ -171,11 +171,12 @@ function EnemyWeapons({ rows }) {
     <StatCard title="相手のブキ別" note="差 = たおした − やられた。マイナスほど苦手" rows={list} sort={{ key: 'seen', dir: -1 }} tools={
       <div className="tools">
         <input type="search" placeholder="ブキ名で絞り込み" value={q} onChange={(e) => setQ(e.target.value)} />
-        <label>遭遇 <select value={min} onChange={(e) => setMin(Number(e.target.value))}>{[1, 3, 5, 10, 20].map((n) => <option key={n} value={n}>{n} 回以上</option>)}</select></label>
+        <label>遭遇 <select value={min} onChange={(e) => setMin(Number(e.target.value))}>{[1, 3, 5, 10, 20].map((n) => <option key={n} value={n}>{n} 人以上</option>)}</select></label>
       </div>
     } cols={[
       { key: 'weapon', label: 'ブキ' },
-      { key: 'seen', label: '遭遇', num: true, bar: 'max' }, { key: 'wins', label: '勝', num: true },
+      { key: 'seen', label: '遭遇(人)', num: true, bar: 'max' }, { key: 'seen_matches', label: '遭遇(試合)', num: true },
+      { key: 'wins', label: '勝(試合)', num: true },
       { key: 'win_pct', label: '勝率 %', num: true, digits: 1, bar: 'pct' },
       { key: 'i_killed', label: 'たおした', num: true }, { key: 'killed_me', label: 'やられた', num: true },
       { key: 'diff', label: '差', num: true, render: (r) => signed(r.diff), cls: (r) => r.diff > 0 ? 'good' : r.diff < 0 ? 'bad' : '' },

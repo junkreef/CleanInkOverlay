@@ -117,7 +117,7 @@ def stage_stats(**f):
 
 
 def enemy_weapon_stats(**f):
-    """相手の武器別: 遭遇数、遭遇時の勝率、やられた/たおした回数"""
+    """相手の武器別: 遭遇数 (人 / 試合)、遭遇した試合の勝ち数と勝率、やられた/たおした回数"""
     k = aliased(MatchPlayer, name='k'); v = aliased(MatchPlayer, name='v'); e = aliased(Event, name='e'); em = aliased(Match, name='em')
     killed_me = (select(func.count()).select_from(e).join(k, (k.match_id == e.match_id) & (k.slot == e.target_slot))
                  .join(em, em.id == e.match_id).where(e.type == 'killed_by', k.weapon == MatchPlayer.weapon, *match_filter(em, **f))
@@ -125,8 +125,10 @@ def enemy_weapon_stats(**f):
     i_killed = (select(func.count()).select_from(e).join(v, (v.match_id == e.match_id) & (v.slot == e.target_slot))
                 .join(em, em.id == e.match_id).where(e.type == 'kill', v.weapon == MatchPlayer.weapon, *match_filter(em, **f))
                 .scalar_subquery())
-    return (select(MatchPlayer.weapon, func.count().label('seen'), wins().label('wins'), win_pct().label('win_pct'),
-                   killed_me.label('killed_me'), i_killed.label('i_killed'))
+    games = func.count(Match.id.distinct())                     # the same weapon twice on the enemy team is still one match
+    won = func.count(case((Match.result == 'win', Match.id)).distinct())
+    return (select(MatchPlayer.weapon, func.count().label('seen'), games.label('seen_matches'), won.label('wins'),
+                   func.round(100.0 * won / games, 1).label('win_pct'), killed_me.label('killed_me'), i_killed.label('i_killed'))
             .select_from(MatchPlayer).join(Match, Match.id == MatchPlayer.match_id)
             .where(MatchPlayer.team == 'enemy', MatchPlayer.weapon.is_not(None), *match_filter(Match, **f))
             .group_by(MatchPlayer.weapon).order_by(func.count().desc()))

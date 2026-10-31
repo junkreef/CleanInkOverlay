@@ -84,8 +84,8 @@ def test_store_roundtrip_and_stats(tmp_path):
     st = s.stats()
     assert st['weapon_stats'] == [{'weapon': 'わかばシューター', 'games': 2, 'wins': 1, 'win_pct': 50.0, 'avg_ka': 1.0, 'avg_d': 7.0, 'avg_sp': 2.0, 'avg_points': 1001.0}]
     assert st['stage_stats'][0]['stage'] == 'ゴンズイ地区' and st['stage_stats'][0]['games'] == 2
-    assert st['enemy_weapon_stats'][0] == {'weapon': 'わかばシューター', 'seen': 6, 'wins': 3, 'win_pct': 50.0, 'killed_me': 0, 'i_killed': 0}
-    assert st['enemy_weapon_stats'][1] == {'weapon': 'スプラローラー', 'seen': 2, 'wins': 1, 'win_pct': 50.0, 'killed_me': 2, 'i_killed': 2}
+    assert st['enemy_weapon_stats'][0] == {'weapon': 'わかばシューター', 'seen': 6, 'seen_matches': 2, 'wins': 1, 'win_pct': 50.0, 'killed_me': 0, 'i_killed': 0}
+    assert st['enemy_weapon_stats'][1] == {'weapon': 'スプラローラー', 'seen': 2, 'seen_matches': 2, 'wins': 1, 'win_pct': 50.0, 'killed_me': 2, 'i_killed': 2}
     assert sorted(st['medal_stats'], key=lambda r: r['name']) == [{'name': 'm_abcd', 'rank': 'silver', 'n': 2}, {'name': 'ナワバリ王', 'rank': 'gold', 'n': 2}]
     assert st['my_timeline'] == [{'from_s': 0, 'type': 'killed_by', 'n': 2}, {'from_s': 30, 'type': 'kill', 'n': 2}]
     assert st['overview'][0]['games'] == 2 and st['overview'][0]['wins'] == 1 and st['overview'][0]['losses'] == 1
@@ -93,7 +93,7 @@ def test_store_roundtrip_and_stats(tmp_path):
 
     later = s.stats(since='2026-09-16T20:30:00')                 # only the second match (the loss)
     assert later['overview'][0]['games'] == 1 and later['overview'][0]['losses'] == 1 and later['weapon_stats'][0]['wins'] == 0
-    assert later['enemy_weapon_stats'][1] == {'weapon': 'スプラローラー', 'seen': 1, 'wins': 0, 'win_pct': 0.0, 'killed_me': 1, 'i_killed': 1}
+    assert later['enemy_weapon_stats'][1] == {'weapon': 'スプラローラー', 'seen': 1, 'seen_matches': 1, 'wins': 0, 'win_pct': 0.0, 'killed_me': 1, 'i_killed': 1}
     assert later['medal_stats'][0]['n'] == 1 and [r['n'] for r in later['my_timeline']] == [1, 1]
     assert s.stats(mode='no such mode')['overview'][0]['games'] == 0 and s.stats(mode='no such mode')['weapon_stats'] == []
 
