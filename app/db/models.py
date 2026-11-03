@@ -6,7 +6,7 @@
                killed_by (killer -> self), special (own activation), special_ready (own gauge became full)
   Timeline     once per second (own HUD): paint points and special gauge fill; ヤグラ / ホコ track, エリア counts, overtime
   Medal        表彰 screen entries (name = label, or the signature id while unlabelled)
-  Weapon       master from the wiki sections (class), used for grouping
+  Weapon       master from assets/weapons.json (class), used for grouping
 Player names are not recorded (random matchmaking): players are identified within a match by HUD slot and weapon.
 
 Schema changes go through Alembic (app/db/migrations): edit the model here, then
@@ -147,4 +147,4 @@ class Weapon(Base):
     __tablename__ = 'weapons'
 
     name: Mapped[str] = mapped_column(Text, primary_key=True)
-    class_: Mapped[str | None] = mapped_column('class', Text)               # シューター / ローラー / チャージャー ... (wiki section)
+    class_: Mapped[str | None] = mapped_column('class', Text)               # シューター / ローラー / チャージャー ... (assets/weapons.json)

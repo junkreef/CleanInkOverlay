@@ -9,3 +9,27 @@ data/*.db-wal
 data/*.db.bak-*
 data/icon_samples/
 config.toml
+# screens / per-match JSON saved by the recorder: local only (other players' names)
+samples/
+# one-off prototype / repair scripts and their outputs
+work/events.py
+work/events2.py
+work/probe.py
+work/probe2.py
+work/probe_sp.py
+work/repair_digits.py
+work/confirm_backfill.py
+work/events.json
+work/f2_video*.csv
+work/f2_video*_events.json
+work/features*.csv
+work/probe.log
+work/crops/
+work/thumbs/
+# wiki weapon icons: no licence, local reference only (weapon_match falls back to them when present)
+assets/weapon_icons/
+assets/weapon_icons_sections.json
+work/wiki/
+# the match database is per user
+data/*.db
+assets/*.bak-*
