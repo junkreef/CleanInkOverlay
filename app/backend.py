@@ -24,7 +24,7 @@ REST  (all JSON)
   GET  /api/overlay?since=                stream overlay data: session totals + recent matches (since = ISO time, 'today', 'all';
                                           default = the session start, which is the backend launch or the last POST below)
   POST /api/overlay/session {start?}      (re)start the overlay session: start = ISO time, or omitted/null = now
-  GET  /overlay                           the OBS browser-source page (web/overlay.html; 1920x1080, game goes top-left at 1280x720)
+  GET  /overlay                           the OBS browser-source page (web/overlay.html; 1920x1080, game goes top-left at 1600x900)
 WS    /ws                                 {"type": "match_saved", "id": N} / {"type": "signatures_changed", ..} /
                                           {"type": "weapon_icons_changed", ..} / {"type": "recorder", ...}
 Pushes come from the store's in-process events (recorder in the same process) and, as a fallback for a
