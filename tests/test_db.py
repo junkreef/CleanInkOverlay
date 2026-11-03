@@ -41,6 +41,14 @@ def test_fresh_db_is_created_at_head_and_matches_models(tmp_path):
     assert not [p for p in os.listdir(tmp_path) if '.bak-' in p]
 
 
+def test_a_new_store_offers_every_main_weapon_from_the_master(tmp_path):
+    """a fresh install has no templates for some weapons; their names still come from assets/weapons.json"""
+    s = Store(root=str(tmp_path), db_path=str(tmp_path / 'new.db'))
+    names = s.weapon_names()
+    assert len(names) == 174 and 'L3リールガン' in names and 'ガチホコ' not in names and 'ブキ無し' not in names
+    s.close()
+
+
 def test_store_refuses_outdated_db_and_upgrade_backs_up_first(tmp_path):
     """migrations of existing files are an explicit step (python -m app.db upgrade), never a side effect of opening"""
     db = str(tmp_path / 'old.db'); upgrade(db)

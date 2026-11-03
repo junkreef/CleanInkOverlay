@@ -26,6 +26,7 @@ WORK = os.path.join(ROOT, 'work')
 if WORK not in sys.path: sys.path.insert(0, WORK)
 from app.db import make_engine, make_session_factory, upgrade, require_current, Match, MatchPlayer, Event, Medal, Timeline, Weapon
 from app.db import queries
+from app.db.weapons import load_weapon_master
 from signatures import Library
 from weapon_icons import IconLibrary, group_name
 
@@ -70,6 +71,7 @@ class Store:
             require_current(self.db_path)                    # an existing file is migrated only on request (python -m app.db upgrade)
         self.engine = make_engine(self.db_path)
         self.Session = make_session_factory(self.engine)
+        with self._lock, self.Session() as s: load_weapon_master(s)   # assets/weapons.json: names to offer, classes for the stats
         self._sig = None
         self._icons = None
 
