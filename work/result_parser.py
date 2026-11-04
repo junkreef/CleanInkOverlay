@@ -37,7 +37,7 @@ HOLE_SETS = ('big', 'small', 'panel_big', 'panel_small')        # has them. The 
 STAGE_SHORT_RULE = 56            # px: the stage name follows the rule name in its tag, so after a 5-character rule (ガチヤグラ;
                                  # ガチエリア / ガチアサリ: about there, see STAGE_SHIFT) it starts 56 px left of where it does after ナワバリバトル / ガチホコバトル
 STAGE_SHIFT = range(-2, 9)       # px around stage_x where the stage name is looked up: the rule name's width moves it by a few px
-                                 # (after ガチアサリ it starts at 1011, 6 px right of ガチヤグラ's 1005) and 1 px off already drops
+                                 # (after ガチアサリ it starts at 1011, 6 px right of ガチヤグラ's 1005, after ガチエリア half a px right) and 1 px off already drops
                                  # the signature from 1.0 to ~0.88, 2 px to ~0.64 (2026-10-29_22-02-57: バイガイ亭 read as a new stage)
 
 
@@ -274,6 +274,9 @@ GT['yagura2'] = {'rows': [('win1', '1449p', 'x14', 'x03', 'x06'), ('win2', '1061
                           ('lose1', '1222p', 'x10', 'x06', 'x03'), ('lose2', '1622p', 'x06', 'x05', 'x06'), ('lose3', '1220p', 'x13', 'x06', 'x04'), ('lose4', '1243p', 'x09', 'x14', 'x04')], 'pct': None}
 GT['yagura3'] = {'rows': [('win1', '1161p', 'x13', 'x03', 'x05'), ('win2', '1855p', 'x09', 'x04', 'x05'), ('win3', '821p', 'x07', 'x10', 'x03'), ('win4', '1329p', 'x09', 'x06', 'x04'),
                           ('lose1', '1046p', 'x10', 'x07', 'x03'), ('lose2', '1287p', 'x05', 'x08', 'x04'), ('lose3', '2151p', 'x08', 'x08', 'x08'), ('lose4', '1064p', 'x08', 'x07', 'x04')], 'pct': None}
+# ガチエリア (2026-11-04_22-59-07.mp4): the first ガチエリア result screen
+GT['area1'] = {'rows': [('win1', '1748p', 'x11', 'x03', 'x08'), ('win2', '1641p', 'x07', 'x04', 'x06'), ('win3', '1263p', 'x08', 'x08', 'x05'), ('win4', '1170p', 'x07', 'x03', 'x05'),
+                        ('lose1', '1502p', 'x09', 'x05', 'x05'), ('lose2', '1719p', 'x08', 'x07', 'x06'), ('lose3', '2102p', 'x05', 'x05', 'x05'), ('lose4', '881p', 'x03', 'x04', 'x05')], 'pct': None}
 GT_STAGE = {'v1m1': 'コンブトラック', 'v1m2': 'ユノハナ大渓谷', 'v1m3': 'ユノハナ大渓谷', 'v2m1': 'ユノハナ大渓谷', 'v2m2': 'ユノハナ大渓谷', 'r1640': 'タラポートショッピングパーク', 'live1': 'スメーシーワールド'}
 GT_WEAPON = {'v1m1': ['プロモデラーMG', 'カーボンローラーANGL', 'スプラシューター', 'スプラローラー', 'N-ZAP85', 'ハイドラント圧', 'スクイックリンα', 'リッター4K'],
              'r1640': [None, 'プロモデラーMG', None, '4Kスコープ', None, 'リッター4K', 'リッター4K', None]}
