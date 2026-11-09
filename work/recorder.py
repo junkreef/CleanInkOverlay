@@ -32,7 +32,7 @@ read the objective's track once per second (work/objective.py: position, who hol
 import argparse, json, os, sys, time, datetime, collections, math
 import cv2, numpy as np
 sys.path.insert(0, os.path.dirname(__file__))
-from result_parser import parse, Glyphs, RESULT_ROWS, NAME, WEAPON, crop as rcrop, white_mask, dark_share
+from result_parser import parse, read_banners, Glyphs, RESULT_ROWS, NAME, WEAPON, crop as rcrop, white_mask, dark_share
 from signatures import signature, Library
 from weapon_match import load_main_weapons, load_wiki_icons, icon_source, imread_u, fit_group
 from weapon_icons import harvestable, lossless, group_name, HARVEST_MIN_SCORE
@@ -456,13 +456,18 @@ class Recorder:
         res = None; result_image = None; ts = m.get('ts') or self.stamp(t)
         if f is not None:
             if self.store.weapon_icons().version != self.icons_version: self.load_icons()   # e.g. an icon named on the web
-            res = parse(f, self.icons, self.glyphs, self.lib); self.store.save_libraries()
+            # unknown banner texts are added only once the screen is sane: a frame of the panel still sliding in passes
+            # looks_like_result but its banner bands cut through two lines (2026-11-10_00-38-55 left two such signatures)
+            res = parse(f, self.icons, self.glyphs, self.lib, add_unknown=False)
             if not result_sane(res):
                 self.log(f'[{t:8.1f}] result screen did not parse sanely (self row / weapons / points) - discarded')
                 if not m.get('nonturf') and (m.get('t0') is None or not m['samples']):   # nothing else to keep (other rules: the judge / panel may be)
                     self.m = None; return
                 res = None; f = None
             else:
+                for k, v in read_banners(f, self.lib).items():                # only fills what parse left unread: the new texts
+                    if res.get(k) is None: res[k] = v
+                self.store.save_libraries()
                 res['counts'] = read_scoreboard_counts(f, self.glyphs)   # ガチルール; all None on a ナワバリ scoreboard
         m['ts'] = ts
         if f is not None:

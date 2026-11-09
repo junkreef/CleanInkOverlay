@@ -183,14 +183,25 @@ def row_glyphs(f, y):
     return pm, pb, sm, sb
 
 
-def parse(f, icons, glyphs, lib=None):
+def read_banners(f, lib, add_unknown=True):
+    """{stage, stage_id, mode, mode_id, rule, rule_id} of the banner; add_unknown: a text the library does not know is
+    added to it (unlabelled), else it reads as None"""
+    out = {}
+    for key in ('stage', 'mode', 'rule'):
+        sid, label, _ = banner_identify(f, key, lib, add_unknown=add_unknown)
+        out[key] = label; out[key + '_id'] = sid
+    return out
+
+
+def parse(f, icons, glyphs, lib=None, add_unknown=True):
     """lib: signature library (stage / mode / rule) to use; the store owns it and nothing is saved here.
+    add_unknown=False: an unknown banner text is not added to lib (the recorder adds it with read_banners once the
+    screen proved to be a real result screen: a frame of the panel still sliding in reads parts of two lines,
+    2026-11-10_00-38-55 left m_f51c054f / r_394ad5e6 that way).
     Player names are not read: the killfeed matching in the recorder uses the raw name signature of each row instead."""
     lib = lib or Library()
     res = {'rows': []}
-    for key in ('stage', 'mode', 'rule'):
-        sid, label, sc = banner_identify(f, key, lib)
-        res[key] = label; res[key + '_id'] = sid
+    res.update(read_banners(f, lib, add_unknown))
     for label, y in RESULT_ROWS.items():
         pm, pb, sm, sb = row_glyphs(f, y)
         pts, pts_sc = glyphs.read(pm, pb, 'big')

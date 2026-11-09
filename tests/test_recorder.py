@@ -3,11 +3,11 @@ in-match readers of these rules (overtime, the ヤグラ / ホコ track), storin
     uv run pytest
 """
 import os, sys
-import cv2
+import cv2, numpy as np
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if os.path.join(ROOT, 'work') not in sys.path: sys.path.insert(0, os.path.join(ROOT, 'work'))
 import recorder as R, hud, objective
-from result_parser import Glyphs
+from result_parser import Glyphs, banner_signature, BANNER_THR
 from rule_screen import title_signature
 from signatures import Library
 from weapon_icons import IconLibrary
@@ -86,7 +86,7 @@ def scoreboard(rule):
 
 
 def stored_pct(rec, store, monkeypatch, rule):
-    monkeypatch.setattr(R, 'parse', lambda *a: scoreboard(rule))
+    monkeypatch.setattr(R, 'parse', lambda *a, **k: scoreboard(rule))
     rec.on_result(OTHER_FRAME, 400.0)
     m = store.json[-1]['match']
     return m['my_pct'], m['enemy_pct']
@@ -279,3 +279,29 @@ def test_fest_cards_stand_further_apart():
     rec_cards = R.card_templates(read_cards(fest))
     score, slot = R.card_scores(frame('fest_bubble_slot7.jpg'), rec_cards)[0]
     assert slot == 7 and score > R.BUB_KILLER                            # 0.41 on the wrong slot with the usual positions
+
+
+def sliding_in(f, dy=-27):
+    """the result screen dy px above its place, as one frame of it sliding in (2026-11-10_00-38-55)"""
+    return cv2.warpAffine(f, np.float32([[1, 0, 0], [0, 1, dy]]), (f.shape[1], f.shape[0]))
+
+
+def test_a_discarded_result_screen_adds_no_signature():
+    """a frame of the result panel still sliding in passes looks_like_result, but its banner bands cut through two lines:
+    the screen is discarded, and none of those texts may join the library (they did: m_f51c054f / r_394ad5e6)"""
+    rec, store = nonturf_match(dry=True)
+    for k in ('m_f51c054f', 'r_394ad5e6'): store.sig.items.pop(k, None)  # those very two, if the library still has them
+    before = set(store.sig.items)
+    rec.finish(sliding_in(frame('0268_result_scoreboard.png')), 800.0)
+    assert set(store.sig.items) == before
+
+
+def test_a_sane_result_screen_still_adds_an_unknown_banner_text():
+    store = FakeStore(); rec = R.Recorder(VIDEO, store, dry=True, log=lambda *a: None)
+    f = frame('0268_result_scoreboard.png')
+    known = rec.lib.identify(banner_signature(f, 'stage', 1061), 'stage', add_unknown=False, thr=BANNER_THR)[0]
+    del store.sig.items[known]                                           # its stage name has never been seen
+    rec.on_result(f, 400.0)
+    (m,) = [j['match'] for j in store.json if 'match' in j]
+    assert store.sig.items[known]['label'] is None                       # back, unlabelled (the id is the hash of the text)
+    assert m['stage'] is None and f'"stage_id": "{known}"' in m['raw_json']
