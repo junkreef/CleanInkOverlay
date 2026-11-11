@@ -55,6 +55,8 @@ def test_a_release_store_writes_under_the_data_folder_and_adopts_shipped_labels(
     assert list(json.load(open(program / 'signatures.json', encoding='utf-8'))) == ['s_a']
     img = s.save_image('2026-11-11_20-00-00', 'result', np.zeros((4, 4, 3), np.uint8))
     assert img == 'samples/matches/2026-11-11_20-00-00_result.png' and s.file_path(img) == str(data / 'samples' / 'matches' / '2026-11-11_20-00-00_result.png')
+    other = 'Q:' if os.path.splitdrive(str(data))[0].upper() != 'Q:' else 'R:'      # a library on another drive (CI: repo on D:, tmp on C:)
+    assert s.rel(other + '\\icons\\a.png') == other + '/icons/a.png'
     s.close()
     # the next release ships the medal's name: the stored medal becomes readable at the next start
     write_lib(str(program / 'signatures.json'), {'s_a': dict(kind='stage', label='ユノハナ大渓谷', sig=[1.0, 0.0]),

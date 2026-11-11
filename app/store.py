@@ -84,8 +84,11 @@ class Store:
 
     # ------------------------------------------------------------------ libraries (owned here, handed out to the analysers)
     def rel(self, path):
-        """path relative to the data folder, with forward slashes (what the DB stores and the web serves)"""
-        return os.path.relpath(path, self.root).replace(os.sep, '/')
+        """path relative to the data folder, with forward slashes (what the DB stores and the web serves); the absolute
+        path for a file on another drive, where no relative path exists (file_path takes both)"""
+        try: r = os.path.relpath(path, self.root)
+        except ValueError: r = os.path.abspath(path)
+        return r.replace(os.sep, '/')
 
     def _shipped(self, name):
         return os.path.join(self.shipped_assets, name) if self.shipped_assets else None
