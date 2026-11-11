@@ -52,6 +52,7 @@ uv run python -m app.recorder --video FILE [--from 秒 --to 秒]   # 録画を�
 - **レコーダーの開始 / 停止** は Web UI のヘッダーから (`POST /api/recorder/start {device?, dry?}` / `POST /api/recorder/stop`、デバイス一覧は `GET /api/recorder/devices`)。
   - デバイス列挙は pygrabber (COM) なので、それに触るスレッド (FastAPI のワーカー、レコーダーのスレッド) は先に `comtypes.CoInitialize()` が要る (`app.recorder._com_init`)。
   - 「OBS Virtual Camera」は OBS が仮想カメラを止めていてもデバイスとして見えるので、開けても映像が来ない (IDLE のまま) ことがある。
+- 録画は **FFmpeg を名指しして開く** (`cv2.CAP_FFMPEG`)。読み取りは FFmpeg で復号したコマに合わせてあり、OpenCV が代わりに使う Windows 標準のデコーダー (MSMF) では画素の値が変わって結果が崩れる (2026-11-12、同じ録画でルール不明・ステージなし・8 人中 4 人のブキが None・キル数 32)。FFmpeg のプラグイン (`cv2/opencv_videoio_ffmpeg*.dll`) が無ければ案内を出して止まる。配布版 (zip) にも同梱している ([release.md](release.md#同梱している-ffmpeg-lgpl))。
 - **録画の解析** は 60 fps の動画を `round(fps / 10)` コマおき (60 fps なら 6 コマに 1 コマ) に読む。ライブは 60 fps のコマを毎回 `grab()` し、0.1 秒ごとに解析するコマだけ `retrieve()` する (追いつき方は `nxt += 0.1`)。
 - テストは `uv run pytest` (`tests/`)。テスト用の画面は `work/frames/` にある。
 - **配布版 (zip)** は Python ごと入っていて、`CleanInkOverlay.bat` が `app.launch` を動かす (データフォルダの用意、DB の移行、ログ、ブラウザ)。作り方は [release.md](release.md)。

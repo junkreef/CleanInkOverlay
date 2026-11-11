@@ -16,8 +16,15 @@ from recorder import Recorder as Engine                      # work/recorder.py
 
 
 def run_video(store, path, t_from=0.0, t_to=None, dry=False, debug=False, log=print, stop=None):
+    # FFmpeg and nothing else: every reading was tuned on its frames. Windows' own decoder (MSMF, what OpenCV falls back
+    # to) gives other pixel values and the result goes wrong without a word - 2026-11-12, same recording: rule unknown,
+    # no stage, 4 of 8 weapons None, kills read as 32. So without the FFmpeg plugin (cv2/opencv_videoio_ffmpeg*.dll) it stops here.
+    cap = cv2.VideoCapture(path, cv2.CAP_FFMPEG)
+    if not cap.isOpened():
+        raise SystemExit(f"{path}: cannot open the video with FFmpeg (no such file, a format it does not know, or OpenCV's "
+                         f'FFmpeg plugin is missing). Recordings are not analysed with another decoder.')
     rec = Engine(path, store, dry=dry, log=log, debug=debug)
-    cap = cv2.VideoCapture(path); fps = cap.get(cv2.CAP_PROP_FPS) or 60.0; step = max(1, int(round(fps / 10))); t_start = time.time()
+    fps = cap.get(cv2.CAP_PROP_FPS) or 60.0; step = max(1, int(round(fps / 10))); t_start = time.time()
     i = int(t_from * fps)
     if i: cap.set(cv2.CAP_PROP_POS_FRAMES, i)
     while not (stop and stop.is_set()):

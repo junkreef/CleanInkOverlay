@@ -77,7 +77,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
-          cat > notes.md <<EOF
+          # what changed in this version, written by hand: docs/release_notes/<tag>.md at the tag (optional)
+          gh api -H "Accept: application/vnd.github.raw" "repos/${GH_REPO}/contents/docs/release_notes/${TAG}.md?ref=${TAG}" > notes.md || : > notes.md
+          cat >> notes.md <<EOF
+
           ## ダウンロード
 
           下の Assets から **CleanInkOverlay-${TAG}-win64.zip** をダウンロードして、すべて展開し、中の \`CleanInkOverlay.bat\` をダブルクリックします。

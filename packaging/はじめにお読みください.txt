@@ -112,7 +112,8 @@ Windows が「発行元を確認できません」「Windows によって PC が
 ------------------------------------------------------------
 https://github.com/junkreef/CleanInkOverlay
 
-CleanInkOverlay は MIT ライセンスです (LICENSE)。同梱しているソフトウェアは THIRD_PARTY_NOTICES.txt を見てください。
+CleanInkOverlay は MIT ライセンスです (LICENSE)。同梱しているソフトウェア (Python、OpenCV、FFmpeg (LGPL) など) と
+それぞれのライセンスは THIRD_PARTY_NOTICES.txt を見てください。
 配信や動画には自由に使えます。このツールの画面が映っている配信・動画では、説明欄 (概要欄) のどこかに上の URL を
 入れてください (いちばん下など、目立たないところでかまいません)。手を加えたものを使うときも同じようにお願いします。
 スプラトゥーン3は任天堂の著作物です。このツールに含まれるテンプレート画像はゲーム画面から切り出したもので、

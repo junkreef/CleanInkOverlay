@@ -24,6 +24,7 @@ CleanInkOverlay/
   LICENSE  THIRD_PARTY_NOTICES.txt  pyproject.toml  config.example.toml
   app/  work/  assets/           git で管理しているファイルのうち実行に要るもの (work/frames と assets/real_icons は除く)
   web/dist/  web/overlay.html    ビルド済みの Web 画面、オーバーレイ
+  web/licenses/                  Web 画面の JavaScript に入っているパッケージ (React など) のライセンス本文
   runtime/python/                Python 本体 + Lib/site-packages (依存パッケージ)
 ```
 
@@ -32,6 +33,17 @@ CleanInkOverlay/
   環境変数 `PYTHONPATH` やユーザーの site-packages は見ないので、PC に別の Python があっても混ざらない。
 - bat は ASCII のみ・CRLF。zip の中の bat を展開せずに実行した人には、日本語のメッセージボックスを出す
   (PowerShell の `[regex]::Unescape` に `\uXXXX` で渡す)。
+
+### 同梱している FFmpeg (LGPL)
+
+opencv-python には、動画ファイルを読むための FFmpeg が DLL (`cv2/opencv_videoio_ffmpeg500_64.dll`) で付いてくる。zip にもそのまま入れている。
+
+- 録画の解析 (`python -m app.recorder --video FILE`) はこのデコーダーでないと正しく読めない ([architecture.md](architecture.md#動かし方))。ライブの取り込み (DirectShow) は cv2 本体だけで動く。
+- 中身は OpenCV プロジェクトがビルドした FFmpeg n7.1 + libvpx v1.16.0 + aom v3.14.1 で、GPL や non-free の部品は入っていない (DLL の中の configure の行に `--enable-gpl` / `--enable-nonfree` が無い)。ライセンスは **LGPL 2.1 以降**。
+- LGPL のバイナリを配るので、`THIRD_PARTY_NOTICES.txt` に次を書いている: 何であるか、ライセンス (本文は `cv2\LICENSE-3RD-PARTY.txt`)、差し替えてよいこと、ビルド元 (`opencv/opencv_3rdparty` のコミット `06dc20ca…`、ブランチ `ffmpeg/5.x_20260602`) と、そこにあるソース取得スクリプト (`ffmpeg/download_src.sh`)・ビルドスクリプト。ソースのアーカイブそのものはリリースに付けていない (opencv-python を同梱するほかのプロジェクトと同じやり方。2026-11-12 の判断)。
+- これらの事実は `build_release.py` の `FFMPEG_PLUGIN` に、DLL の MD5 と一緒に固定してある。opencv-python を上げて DLL が変わるとビルドが止まるので、OpenCV の `3rdparty/ffmpeg/ffmpeg.cmake` (バイナリのコミットと MD5)、そのコミットの `ffmpeg/download_src.sh` (各ソースのタグ)、DLL の中の configure の行を見直して書き換える。
+
+同梱しているものとそのライセンスの一覧は、ビルド時に `THIRD_PARTY_NOTICES.txt` として zip の直下に書き出す (Python のパッケージは各 `dist-info`、Web 画面の JavaScript のパッケージは `web/licenses/` に本文がある)。
 
 ## プログラムのフォルダとデータフォルダ (`app/paths.py`)
 
@@ -90,7 +102,7 @@ python tools/smoke_release.py              # その zip を、使う人と同じ
 
 - `build_release.py`: 管理下のファイルを写す → `npm ci && npm run build` → embeddable package をダウンロード
   (`dist/cache/`、SHA-256 を `PYTHON_SHA256` と照合) → `uv export` + `uv pip install --target` で依存パッケージ →
-  `THIRD_PARTY_NOTICES.txt` → 検査 (必須ファイル、テンプレートの数、パスの長さ ≤ 150 文字) → zip。
+  `THIRD_PARTY_NOTICES.txt` → 検査 (必須ファイル、FFmpeg の DLL が `FFMPEG_PLUGIN` のものであること、テンプレートの数、パスの長さ ≤ 150 文字) → zip。
   - Python のバージョンは `.python-version` (テストを走らせるのと同じもの)。上げるときは `PYTHON_SHA256` に足す。
     足す前に、展開した `python.exe` の署名が Python Software Foundation のものか確かめる (`Get-AuthenticodeSignature`)。
   - パスの長さを見るのは、エクスプローラーの展開が 260 文字を超えるパスで失敗するため。
@@ -106,7 +118,7 @@ python tools/smoke_release.py              # その zip を、使う人と同じ
 
 ## リリースの手順
 
-1. `pyproject.toml` の `version` を上げてコミットし、main に push する。
+1. `pyproject.toml` の `version` を上げ (`uv lock` で `uv.lock` も合わせる)、そのバージョンで変わったことを `docs/release_notes/v<version>.md` に書いてコミットし、main に push する。このファイルがリリースの説明の先頭に入る (無ければ省かれる)。
 2. `git tag v<version>` を push する。GitHub Actions ([`.github/workflows/build.yml`](../.github/workflows/build.yml)) がテスト →
    ビルド → スモークテストを走らせ、zip を付けた**下書き**のリリースを作る (タグと `version` が違えば失敗する)。
 3. GitHub の Releases で下書きを確かめ、説明を足して「Publish release」を押す。

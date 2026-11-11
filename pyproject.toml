@@ -1,6 +1,6 @@
 [project]
 name = "cleaninkoverlay"
-version = "0.1.0"
+version = "0.1.1"
 description = "Splatoon 3 capture-video analyzer: recorder, data store, web backend"
 requires-python = ">=3.13"
 dependencies = [

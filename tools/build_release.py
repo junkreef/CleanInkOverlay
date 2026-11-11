@@ -5,6 +5,7 @@
     dist/CleanInkOverlay/                        what the zip unpacks to
         CleanInkOverlay.bat, ...                 packaging/ (launchers, the user's read-me)
         app/ work/ assets/ web/ ...              the tracked files a run needs (PROGRAM / NOT_SHIPPED below)
+        web/dist/, web/licenses/                 the built web UI and the licences of the packages inside its JavaScript
         runtime/python/                          Python's embeddable package from python.org + the locked dependencies
         THIRD_PARTY_NOTICES.txt                  what is bundled, under which licence
     dist/CleanInkOverlay-v<version>-win64.zip
@@ -17,7 +18,7 @@ the zip to a draft release for a v* tag.
 Only tracked files are copied (git ls-files), so local-only material - the wiki icons, samples/, the DB - cannot end
 up in a package. The Python version is the one in .python-version, the same the tests run on.
 """
-import argparse, hashlib, os, shutil, subprocess, sys, tomllib, urllib.request, zipfile
+import argparse, hashlib, json, os, shutil, subprocess, sys, tomllib, urllib.request, zipfile
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 NAME = 'CleanInkOverlay'
@@ -30,6 +31,20 @@ PYTHON_SHA256 = {
 PROGRAM = ('app/', 'work/', 'assets/', 'web/overlay.html', 'LICENSE', 'pyproject.toml', 'config.example.toml')
 NOT_SHIPPED = ('work/frames/',          # test screens (160 MB)
                'assets/real_icons/')    # reference crops for the developer tools
+# opencv-python comes with FFmpeg as a DLL that OpenCV loads to read video files (app.recorder --video needs exactly
+# this decoder). It is LGPL, so the package has to say what it is, under which licence, and where it and its source come
+# from (notices()). The facts below are OpenCV's own, for the DLL with this checksum:
+#   opencv/opencv 3rdparty/ffmpeg/ffmpeg.cmake            the opencv_3rdparty commit of the binaries + their MD5
+#   that commit's ffmpeg/download_src.sh                   the tags it was built from
+#   the configuration line inside the DLL                  no --enable-gpl, no --enable-nonfree: LGPL 2.1 or later
+# After an opencv-python upgrade the checksum differs and the build stops: read those three again and update this.
+FFMPEG_PLUGIN = {
+    'file': 'cv2/opencv_videoio_ffmpeg500_64.dll',
+    'md5': 'a821a1135251859655090c795af05789',
+    'parts': 'FFmpeg n7.1, libvpx v1.16.0 and aom v3.14.1',
+    'commit': '06dc20cad65dc7fcf784f70c95d46750520889a7',
+    'branch': 'ffmpeg/5.x_20260602',
+}
 PACKAGING = os.path.join(ROOT, 'packaging')
 MAX_PATH_IN_ZIP = 150                   # Explorer cannot unpack past 260 characters: leave ~100 for where the user puts it
 
@@ -72,12 +87,24 @@ def copy_program(dst):
 
 
 def build_web(dst, skip):
-    web = os.path.join(ROOT, 'web')
+    """web/dist, and web/licenses/<package>.txt for every package the JavaScript bundle is made of (React and what it
+    depends on: the bundle itself only carries a one-line banner, the MIT licence wants its text passed on).
+    Returns [(package, version, licence)]."""
+    web = os.path.join(ROOT, 'web'); npm = shutil.which('npm') or sys.exit('npm (Node.js) is needed to build the web UI')
     if not skip:
-        npm = shutil.which('npm') or sys.exit('npm (Node.js) is needed to build the web UI')
         run([npm, 'ci', '--no-audit', '--no-fund'], cwd=web); run([npm, 'run', 'build'], cwd=web)
     if not os.path.exists(os.path.join(web, 'dist', 'index.html')): sys.exit('web/dist is missing: build it (drop --skip-web)')
     shutil.copytree(os.path.join(web, 'dist'), os.path.join(dst, 'web', 'dist'))
+    listed = subprocess.run([npm, 'ls', '--omit=dev', '--all', '--parseable'], cwd=web, capture_output=True, text=True, check=True).stdout
+    out = []; lic_dir = os.path.join(dst, 'web', 'licenses'); os.makedirs(lic_dir)
+    for d in sorted({p.strip() for p in listed.split('\n') if 'node_modules' in p}):
+        with open(os.path.join(d, 'package.json'), encoding='utf-8') as fh: meta = json.load(fh)
+        texts = [f for f in sorted(os.listdir(d)) if f.upper().startswith(('LICENSE', 'LICENCE'))]
+        if not texts: sys.exit(f'{d}: no licence file for a package that is part of the web UI')
+        shutil.copyfile(os.path.join(d, texts[0]), os.path.join(lic_dir, meta['name'].replace('/', '_') + '.txt'))
+        out.append((meta['name'], meta['version'], str(meta.get('license', '?'))))
+    if not out: sys.exit('npm ls listed no packages: run npm ci in web/ (drop --skip-web)')
+    return out
 
 
 def fetch_python(version, cache):
@@ -111,12 +138,10 @@ def build_runtime(dst, cache):
     run([*uv(), 'pip', 'install', '--quiet', '--target', site, '--python-version', version, '--python-platform', 'x86_64-pc-windows-msvc',
          '--only-binary', ':all:', '--no-deps', '-r', req], cwd=ROOT)
     shutil.rmtree(os.path.join(site, 'bin'), ignore_errors=True)      # console scripts with the build machine's paths in them
-    for d, dirs, _ in os.walk(site):
-        for sub in [s for s in dirs if s == '__pycache__']: shutil.rmtree(os.path.join(d, sub)); dirs.remove(sub)
     return version
 
 
-def notices(dst, py_version):
+def notices(dst, py_version, web_packages):
     """THIRD_PARTY_NOTICES.txt from the installed packages' metadata (their licence files stay in *.dist-info)"""
     site = os.path.join(dst, 'runtime', 'python', 'Lib', 'site-packages'); rows = []
     for d in sorted(os.listdir(site), key=str.lower):
@@ -136,9 +161,20 @@ def notices(dst, py_version):
                  f'Python {py_version} (runtime\\python) - Python Software Foundation License, runtime\\python\\LICENSE.txt\n\n'
                  'Python packages (runtime\\python\\Lib\\site-packages; the licence texts are in each <name>-<version>.dist-info folder):\n\n')
         for name, ver, lic in rows: fh.write(f'  {name} {ver} - {lic}\n')
-        fh.write('\nopencv-python bundles FFmpeg (LGPL) and other libraries: see its LICENSE-3RD-PARTY.txt.\n'
-                 'The web UI (web\\dist) is built with React (MIT).\n')
-    print(f'notices: Python + {len(rows)} packages')
+        f = FFMPEG_PLUGIN
+        fh.write('\nFFmpeg\n\n'
+                 f'  runtime\\python\\Lib\\site-packages\\{f["file"].replace("/", chr(92))} is {f["parts"]},\n'
+                 '  built by the OpenCV project without GPL or non-free parts and passed on here unchanged, as it comes with\n'
+                 '  opencv-python. It is licensed under the GNU Lesser General Public License, version 2.1 or later; the licence\n'
+                 '  text is in cv2\\LICENSE-3RD-PARTY.txt. OpenCV loads the file at run time to read video files, and you may put\n'
+                 '  your own build in its place.\n'
+                 f'  It comes from https://github.com/opencv/opencv_3rdparty, commit {f["commit"]}\n'
+                 f'  (branch {f["branch"]}). In that repository, ffmpeg/download_src.sh fetches the source code it was built\n'
+                 '  from and ffmpeg/build_via_docker.sh builds it.\n\n'
+                 'opencv-python comes with further libraries inside: see cv2\\LICENSE-3RD-PARTY.txt.\n\n'
+                 'JavaScript packages inside the web UI (web\\dist; the licence texts are in web\\licenses):\n\n')
+        for name, ver, lic in web_packages: fh.write(f'  {name} {ver} - {lic}\n')
+    print(f'notices: Python + {len(rows)} packages, {len(web_packages)} JavaScript packages')
 
 
 def check(dst):
@@ -148,6 +184,12 @@ def check(dst):
     for need in ('CleanInkOverlay.bat', 'app/launch.py', 'web/dist/index.html', 'web/overlay.html', 'assets/signatures.json', 'assets/weapons.json',
                  'runtime/python/python.exe', 'runtime/python/Lib/site-packages/cv2', 'runtime/python/Lib/site-packages/uvicorn'):
         if not os.path.exists(os.path.join(dst, need)): sys.exit(f'missing in the package: {need}')
+    cv2_dir = os.path.join(dst, 'runtime', 'python', 'Lib', 'site-packages', 'cv2')
+    plugins = [f for f in os.listdir(cv2_dir) if 'ffmpeg' in f.lower()]
+    if plugins != [os.path.basename(FFMPEG_PLUGIN['file'])]: sys.exit(f'FFmpeg plugins in the package: {plugins}, FFMPEG_PLUGIN describes {FFMPEG_PLUGIN["file"]}')
+    with open(os.path.join(cv2_dir, plugins[0]), 'rb') as fh: digest = hashlib.md5(fh.read()).hexdigest()
+    if digest != FFMPEG_PLUGIN['md5']: sys.exit(f'{plugins[0]} has MD5 {digest}: not the build FFMPEG_PLUGIN (and so THIRD_PARTY_NOTICES.txt) describes')
+    if not os.path.exists(os.path.join(dst, 'web', 'licenses', 'react.txt')): sys.exit('web/licenses/react.txt is missing')
     n = len([f for f in os.listdir(os.path.join(dst, 'assets', 'weapon_icons_captured')) if f.endswith('.png')])
     if n < 170: sys.exit(f'only {n} weapon icon templates in the package')
 
@@ -174,8 +216,8 @@ def main():
     out = os.path.abspath(a.out); dst = os.path.join(out, NAME); cache = os.path.join(out, 'cache')
     shutil.rmtree(dst, ignore_errors=True); os.makedirs(dst); os.makedirs(cache, exist_ok=True)
     copy_program(dst)
-    build_web(dst, a.skip_web)
-    notices(dst, build_runtime(dst, cache))
+    web_packages = build_web(dst, a.skip_web)
+    notices(dst, build_runtime(dst, cache), web_packages)
     check(dst)
     size = sum(os.path.getsize(os.path.join(d, f)) for d, _, fs in os.walk(dst) for f in fs)
     print(f'{dst}: {NAME} {version}, {size / 2**20:.0f} MB')
