@@ -160,6 +160,7 @@ class IconLibrary:
         keeps the program folder read-only, app.paths). They are loaded first and never written; a template rebuilt
         from local samples goes to captured_dir and wins from then on."""
         self.captured_dir, self.samples_dir = captured_dir, samples_dir
+        self.template_dirs = [d for d in (shipped_dir, captured_dir) if d]      # for loaders of the files: later folders win
         self.shipped_templates = load_templates(shipped_dir)
         self.templates = {**self.shipped_templates, **load_templates(captured_dir)}
         self.pending = {}           # name -> [(file stem, crop)] not written yet

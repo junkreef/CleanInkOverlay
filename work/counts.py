@@ -18,6 +18,7 @@ glyphs: 0 at 0.88-0.93, 5 at 0.81). Only 0 and 5 were seen there so far; the jud
 """
 import cv2, json, numpy as np, os, sys
 sys.path.insert(0, os.path.dirname(__file__))
+from weapon_icons import imread_u                      # cv2.imread cannot open a path with non-ASCII characters (a user's folder)
 from result_parser import Glyphs, GLYPH_DIR, white_mask, glyph_boxes, merge_boxes, norm_glyph
 
 TPL_DIR = os.path.join(os.path.dirname(__file__), 'templates')
@@ -32,7 +33,7 @@ _tpl = {}
 
 
 def ko_template(kind):
-    if kind not in _tpl: _tpl[kind] = cv2.imread(os.path.join(TPL_DIR, f'ko_{kind}.png'), 0)
+    if kind not in _tpl: _tpl[kind] = imread_u(os.path.join(TPL_DIR, f'ko_{kind}.png'), 0)
     return _tpl[kind]
 
 

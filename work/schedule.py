@@ -12,6 +12,7 @@ The white text sits at y 528-575, x 776-1143 and is told apart by a template of 
 """
 import cv2, os, sys
 sys.path.insert(0, os.path.dirname(__file__))
+from weapon_icons import imread_u                      # cv2.imread cannot open a path with non-ASCII characters (a user's folder)
 from result_parser import white_mask, dark_share
 
 TPL_PATH = os.path.join(os.path.dirname(__file__), 'templates', 'schedule_updated.png')
@@ -24,7 +25,7 @@ _tpl = []
 
 def template():
     if not _tpl:
-        t = cv2.imread(TPL_PATH, 0)
+        t = imread_u(TPL_PATH, 0)
         if t is not None: _tpl.append(t)
     return _tpl[0] if _tpl else None
 

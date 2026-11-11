@@ -13,6 +13,7 @@ true 0.74-0.97, runner-up <= 0.66). Dead players show a grey silhouette + X inst
 """
 import cv2, itertools, numpy as np, os, sys, json
 sys.path.insert(0, os.path.dirname(__file__))
+from weapon_icons import imread_u                      # cv2.imread cannot open a path with non-ASCII characters (a user's folder)
 from result_parser import glyph_boxes, merge_boxes, norm_glyph, white_mask, bright_mask, dark_share, GLYPH_DIR   # glyph sets: timer (build_timer_glyphs), points (HUD paint points, labelled by hand from clustered glyphs)
 
 SLOT_X = [(527, 597), (622, 692), (711, 781), (799, 869), (1057, 1127), (1145, 1215), (1233, 1303), (1320, 1390)]
@@ -71,7 +72,7 @@ def overtime(f):
     around them can go black (ガチアサリ: the box empties from the top as the overtime runs out)"""
     global _overtime_tpl
     if _overtime_tpl is None:
-        tpl = cv2.imread(os.path.join(os.path.dirname(__file__), 'templates', 'overtime.png'), 0)
+        tpl = imread_u(os.path.join(os.path.dirname(__file__), 'templates', 'overtime.png'), 0)
         pad = cv2.copyMakeBorder((tpl > 0).astype(np.uint8), 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=0)
         cv2.floodFill(pad, None, (0, 0), 2)                   # outside the letters
         _overtime_tpl = tpl.astype(np.float32), (pad[1:-1, 1:-1] != 2).astype(np.float32)
@@ -99,7 +100,7 @@ _map_tpl = []
 def map_open(f):
     """the map fills the screen (opened with X; while dead too): HUD, slots and gauge are behind it. The icon top left is
     the pin of the normal HUD turned into a white ×, told by that × (work/templates/map_close.png, from frames/0082_map_open.png)"""
-    if not _map_tpl: _map_tpl.append(cv2.imread(os.path.join(os.path.dirname(__file__), 'templates', 'map_close.png'), 0))
+    if not _map_tpl: _map_tpl.append(imread_u(os.path.join(os.path.dirname(__file__), 'templates', 'map_close.png'), 0))
     y0, y1, x0, x1 = MAP_X
     m = white_mask(f[y0 - MAP_PAD:y1 + MAP_PAD, x0 - MAP_PAD:x1 + MAP_PAD], 200)
     return bool(cv2.countNonZero(m)) and float(cv2.matchTemplate(m * 255, _map_tpl[0], cv2.TM_CCOEFF_NORMED).max()) >= MAP_THR

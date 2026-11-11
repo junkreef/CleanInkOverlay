@@ -82,6 +82,9 @@ def test_rebuilt_icon_templates_go_to_the_users_folder_and_win_over_the_shipped_
     assert os.listdir(own) == ['テストシューター.png'] and (shipped / 'テストシューター.png').read_bytes() == before
     lib = IconLibrary(str(own), str(samples), shipped_dir=str(shipped))
     assert not np.array_equal(lib.templates['テストシューター'], lib.shipped_templates['テストシューター'])
+    from weapon_match import load_main_weapons                                   # the recorder's loader reads the same two folders
+    assert np.array_equal(load_main_weapons(source='captured', captured_dir=lib.template_dirs)['テストシューター'], lib.templates['テストシューター'])
+    assert np.array_equal(load_main_weapons(source='captured', captured_dir=[str(shipped)])['テストシューター'], lib.shipped_templates['テストシューター'])
     for st in stems: lib.drop_sample('テストシューター', st)                       # all of them were wrong: back to the shipped one
     lib.save()
     assert os.listdir(own) == [] and lib.templates['テストシューター'] is lib.shipped_templates['テストシューター']

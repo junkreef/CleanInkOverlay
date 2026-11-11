@@ -147,8 +147,8 @@ class Recorder:
         self.load_icons()
         self.wiki_icons = load_wiki_icons() if icon_source() != 'captured' else {}   # aligns / trims new captured templates
         self.glyphs = Glyphs(); self.lib = store.signatures()
-        self.tpl_yar = cv2.imread(os.path.join(TPL_DIR, 'yarareta.png'), 0)
-        self.tpl_rsp = cv2.imread(os.path.join(TPL_DIR, 'respawn.png'), 0)
+        self.tpl_yar = imread_u(os.path.join(TPL_DIR, 'yarareta.png'), 0)
+        self.tpl_rsp = imread_u(os.path.join(TPL_DIR, 'respawn.png'), 0)
         self.state = 'IDLE'; self.m = None; self.t_state = 0.0; self.t_last_store = -1e9
         self.scr = None; self.n_scr = 0; self.t_scr = 0.0     # current screen, how many samples it has lasted, since when
         self.t_map = -1e9                                     # when the map was last seen
@@ -413,7 +413,7 @@ class Recorder:
     def load_icons(self):
         # the unknown groups stay out of these sets: in the matcher a group made from one bad crop of a known weapon would
         # compete with that weapon's template and take its later rows; harvest_icons tries the groups after the matcher
-        lib = self.store.weapon_icons(); d = lib.captured_dir
+        lib = self.store.weapon_icons(); d = lib.template_dirs
         self.icons = load_main_weapons(captured_dir=d)                # 56 px composites for the result screen
         self.icons_big = load_main_weapons(size=256, captured_dir=d)  # RGBA for HUD icon linking
         self.icons_version = lib.version

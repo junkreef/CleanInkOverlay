@@ -17,6 +17,7 @@ at x 166, right text ends at x 1757. The label
 """
 import cv2, json, numpy as np, os, re, sys
 sys.path.insert(0, os.path.dirname(__file__))
+from weapon_icons import imread_u                      # cv2.imread cannot open a path with non-ASCII characters (a user's folder)
 from result_parser import Glyphs, GLYPH_DIR, white_mask, dark_share, glyph_boxes, merge_boxes, norm_glyph
 
 TPL_DIR = os.path.join(os.path.dirname(__file__), 'templates')
@@ -32,7 +33,7 @@ _tpl = {}
 def label_templates():
     if not _tpl:
         for k in ('win', 'lose'):
-            t = cv2.imread(os.path.join(TPL_DIR, f'judge_{k}.png'), 0)
+            t = imread_u(os.path.join(TPL_DIR, f'judge_{k}.png'), 0)
             if t is not None: _tpl[k] = t
     return _tpl
 

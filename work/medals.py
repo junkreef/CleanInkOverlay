@@ -12,6 +12,7 @@ text (dark on white) region, squid medal icon (yellow = gold, grey = silver). Th
 import cv2, numpy as np, os, sys
 sys.path.insert(0, os.path.dirname(__file__))
 from signatures import Library
+from weapon_icons import imread_u                      # cv2.imread cannot open a path with non-ASCII characters (a user's folder)
 from result_parser import dark_share
 
 ROOT = os.path.join(os.path.dirname(__file__), '..')
@@ -50,7 +51,7 @@ def region(layout, i, key):
 def header_score(f):
     global _tpl
     if _tpl is None:
-        _tpl = cv2.imread(TPL, 0)
+        _tpl = imread_u(TPL, 0)
     m = (f[HEADER[0]:HEADER[1], HEADER[2]:HEADER[3]].min(axis=2) > 200).astype(np.uint8) * 255
     return float(cv2.matchTemplate(m, _tpl, cv2.TM_CCOEFF_NORMED).max())
 

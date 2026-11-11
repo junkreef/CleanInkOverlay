@@ -49,13 +49,14 @@ def load_wiki_icons(size=ICON_PX):
 
 def load_captured_icons(size=ICON_PX, captured_dir=CAPTURED_DIR):
     """RGBA templates cut from our result screens (56 px); other sizes are for the HUD linking, so they also lose the
-    result screen's drop shadow (weapon_icons.without_shadow)"""
+    result screen's drop shadow (weapon_icons.without_shadow). captured_dir: a folder, or several where a later one's
+    template replaces an earlier one's (IconLibrary.template_dirs: the shipped templates, then the user's own)"""
     out = {}
-    if not os.path.isdir(captured_dir): return out
-    for f in os.listdir(captured_dir):
-        im = imread_u(os.path.join(captured_dir, f)) if f.endswith('.png') else None
-        if im is None or im.ndim != 3 or im.shape[2] != 4: continue
-        out[f[:-4]] = im if size == ICON_PX else cv2.resize(without_shadow(im), (size, size), interpolation=cv2.INTER_CUBIC)
+    for d in [captured_dir] if isinstance(captured_dir, str) else captured_dir:
+        for f in os.listdir(d) if os.path.isdir(d) else []:
+            im = imread_u(os.path.join(d, f)) if f.endswith('.png') else None
+            if im is None or im.ndim != 3 or im.shape[2] != 4: continue
+            out[f[:-4]] = im if size == ICON_PX else cv2.resize(without_shadow(im), (size, size), interpolation=cv2.INTER_CUBIC)
     return out
 
 
