@@ -60,7 +60,7 @@
 ## 移行 (Alembic)
 
 - リビジョン: `0001_baseline` (SQLAlchemy 化した時点のスキーマ)、`0002_team_points` (matches のチームのポイント)、`0003_objective_timeline` (timeline の obj_* / カウント / overtime)、`0004_area_penalty` (timeline のペナルティ)。
-- **既存のファイルは頼まれたときだけ移行する**。`Store()` は、無い (か空の) ファイルは現行のスキーマで作るが、リビジョンが古いファイルは `SchemaOutdated` (次のコマンドを案内するメッセージ) で開かない。移行はバックエンドを止めてから:
+- **既存のファイルは頼まれたときだけ移行する** (配布版では、起動のたびにランチャーが頼む: [release.md](release.md#ランチャー-applaunchpy))。`Store()` は、無い (か空の) ファイルは現行のスキーマで作るが、リビジョンが古いファイルは `SchemaOutdated` (次のコマンドを案内するメッセージ) で開かない。移行はバックエンドを止めてから:
 
   ```
   uv run python -m app.db upgrade [--db PATH]
@@ -117,6 +117,6 @@ uv run python -m app.db matches   [--db PATH]   # 自分の試合の一覧
 
 バックエンドの起動時に `Store.prune_images` が、`config.toml` の `images.keep_days` (既定 7) 日より古い (ファイルの更新時刻) 画面 PNG と証拠 JPG を消す。
 
-- 残すもの: git で管理しているファイル (テスト用など)、未ラベルの署名が写っている画面 (ラベル付けのページで使う)、試合 JSON。
+- 残すもの: 未ラベルの署名が写っている画面 (ラベル付けのページで使う)、試合 JSON。
 - 消した画面を指している `matches` の画像の列は NULL にする。
-- `git ls-files` が失敗したら何も消さない。
+- 何を残すかはファイルだけで決まる (以前は git で管理しているファイルを残していたが、git の無い配布版では何も消えなかった)。

@@ -31,7 +31,7 @@ Store はプロセス内のイベントバスも持つ (`store.events.subscribe(
 
 ## 環境
 
-- Python は uv で管理する (`pyproject.toml`、Python 3.13、opencv-python / numpy / FastAPI / uvicorn / pygrabber / SQLAlchemy / Alembic、開発用に pytest)。`uv sync` で `.venv` を作る。uv をユーザー site に入れた場合は `python -m uv ...` で呼ぶ。
+- Python は uv で管理する (`pyproject.toml`、バージョンは `.python-version`、opencv-python / numpy / FastAPI / uvicorn / pygrabber / SQLAlchemy / Alembic、開発用に pytest)。`uv sync` で `.venv` を作る。uv をユーザー site に入れた場合は `python -m uv ...` で呼ぶ。
 - フロントエンドは Node + npm (React 18 + Vite 5)。`cd web && npm install && npm run build` で `web/dist` を作る。開発中は `npm run dev` (:5173) から :8000 へプロキシ。
 - ライブ取り込みは Windows の DirectShow (OpenCV の `CAP_DSHOW`)。既定の入力は OBS Virtual Camera。
 
@@ -54,8 +54,11 @@ uv run python -m app.recorder --video FILE [--from 秒 --to 秒]   # 録画を�
   - 「OBS Virtual Camera」は OBS が仮想カメラを止めていてもデバイスとして見えるので、開けても映像が来ない (IDLE のまま) ことがある。
 - **録画の解析** は 60 fps の動画を `round(fps / 10)` コマおき (60 fps なら 6 コマに 1 コマ) に読む。ライブは 60 fps のコマを毎回 `grab()` し、0.1 秒ごとに解析するコマだけ `retrieve()` する (追いつき方は `nxt += 0.1`)。
 - テストは `uv run pytest` (`tests/`)。テスト用の画面は `work/frames/` にある。
+- **配布版 (zip)** は Python ごと入っていて、`CleanInkOverlay.bat` が `app.launch` を動かす (データフォルダの用意、DB の移行、ログ、ブラウザ)。作り方は [release.md](release.md)。
 
 ## ファイルの置き場所
+
+下の表の「配布しない」ものと `config.toml` は**データフォルダ** (`app.paths.DATA_ROOT`) の下にある。git の作業ツリーではリポジトリのルートそのもの、配布版では `%LOCALAPPDATA%\CleanInkOverlay` で、プログラムのフォルダには書き込まない (環境変数 `CLEANINK_HOME` で変えられる)。配布版では、`assets/signatures.json` と `assets/weapon_icons_captured/` に使う人が足した分もデータフォルダの同じパスに入る ([release.md](release.md#プログラムのフォルダとデータフォルダ-apppathspy))。
 
 | 場所 | 中身 | 配布 |
 |---|---|---|
@@ -75,7 +78,7 @@ uv run python -m app.recorder --video FILE [--from 秒 --to 秒]   # 録画を�
 
 ## 設定 (`config.toml`)
 
-任意。`config.example.toml` (全項目と既定値) を `config.toml` に写して変える。無い項目は既定値、知らない項目や不正な値はキー名を出して止まる (`app/config.py`)。
+任意。`config.example.toml` (全項目と既定値) を、データフォルダの `config.toml` に写して変える。無い項目は既定値、知らない項目や不正な値はキー名を出して止まる (`app/config.py`)。
 
 | キー | 既定 | 意味 |
 |---|---|---|

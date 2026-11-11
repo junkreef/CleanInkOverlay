@@ -18,6 +18,7 @@ Splatoon 3 (日本語 UI) のキャプチャ映像 (1920x1080 / 60 fps) を解�
 | [ranked_rules.md](ranked_rules.md) | ガチルール: ルール名による解析の切り替え、カウント / ノックアウト、ヤグラ・ホコの線、エリア・アサリのカウントとペナルティ、延長戦 |
 | [data_storage.md](data_storage.md) | SQLite のスキーマ、Alembic の移行 (`python -m app.db upgrade`)、画像と JSON、統計クエリ |
 | [web_ui.md](web_ui.md) | Web UI (試合一覧・詳細・統計・ラベル付け) と配信オーバーレイ |
+| [release.md](release.md) | 配布パッケージ (Windows 用 zip): 中身、データフォルダの分離、ランチャー、作り方、リリースの手順 |
 | [limitations.md](limitations.md) | 既知の制限・未確認のこと・未対応のこと |
 | [recorder_states.svg](recorder_states.svg) | レコーダーの状態遷移図 (recorder.md から参照) |
 
