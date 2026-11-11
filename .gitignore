@@ -33,3 +33,6 @@ work/wiki/
 # the match database is per user
 data/*.db
 assets/*.bak-*
+
+# release packages (tools/build_release.py)
+/dist/
