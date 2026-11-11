@@ -5,25 +5,31 @@ It is a plain Python module, not a network server: the recorder and the web back
 run in one process (the backend starts the recorder as a thread) or separately (SQLite in WAL mode).
 The DB layer is SQLAlchemy (models / queries / migrations live in app/db). A missing file is created at the
 current schema; an existing file whose schema is behind is refused with a message, and migrated only when
-asked: `uv run python -m app.db upgrade` (backs up the file next to itself first).
+asked: `uv run python -m app.db upgrade` (backs up the file next to itself first; the release launcher,
+app.launch, asks for it at every start).
+Everything the store writes is under its `root`, the data folder (app.paths.DATA_ROOT). In a git checkout that is
+the repo root and the libraries are the files under assets/. In a release the program folder is read-only: the
+shipped libraries are read from there and what the user adds goes to the same paths under the data folder.
 In-process notifications go through `store.events` (subscribe(topic, callback) / publish): topics are
 'match_saved' {id}, 'match_deleted' {id}, 'signatures_changed' {}.
 
     from app.store import Store
-    s = Store()                      # data/splatoon.db under the repo root
+    s = Store()                      # data/splatoon.db under the data folder
     s.list_matches(); s.get_match(3); s.label_signature('s_ca328fa4', 'タカアシ経済特区')
 
 Old screen images are deleted by `Store.prune_images` (the backend runs it at startup; by hand:
 `uv run python -m app.store prune-images [--days N] [--dry]`; N defaults to config.toml's images.keep_days, itself 7).
 """
-import os, sys, json, subprocess, threading, time
+import os, sys, json, threading, time
 import numpy as np
 import cv2
 from sqlalchemy import delete, func, select, update
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 WORK = os.path.join(ROOT, 'work')
+if ROOT not in sys.path: sys.path.insert(0, ROOT)
 if WORK not in sys.path: sys.path.insert(0, WORK)
+from app.paths import DATA_ROOT, SPLIT, ASSETS
 from app.db import make_engine, make_session_factory, upgrade, require_current, Match, MatchPlayer, Event, Medal, Timeline, Weapon
 from app.db import queries
 from app.db.weapons import load_weapon_master
@@ -51,14 +57,15 @@ class Events:
             except Exception as e: print(f'[events] {topic} subscriber failed: {e!r}', flush=True)
 
 
-def rel(path):
-    """repo-relative path with forward slashes (what the DB stores and the web serves)"""
-    return os.path.relpath(path, ROOT).replace(os.sep, '/')
-
-
 class Store:
-    def __init__(self, root=ROOT, db_path=None, images_dir='samples/matches'):
+    def __init__(self, root=None, db_path=None, images_dir='samples/matches', shipped_assets=None):
+        """root: the data folder (default app.paths.DATA_ROOT). shipped_assets: the program's assets folder when the
+        libraries under root/assets only hold the user's additions (default: so for a release, where the two differ)"""
+        if root is None:
+            root = DATA_ROOT
+            if shipped_assets is None and SPLIT: shipped_assets = ASSETS
         self.root = root
+        self.shipped_assets = shipped_assets
         self.db_path = db_path or os.path.join(root, 'data', 'splatoon.db')
         self.images_dir = os.path.join(root, images_dir)
         self.misses_dir = os.path.join(root, 'samples', 'misses')
@@ -76,14 +83,32 @@ class Store:
         self._icons = None
 
     # ------------------------------------------------------------------ libraries (owned here, handed out to the analysers)
+    def rel(self, path):
+        """path relative to the data folder, with forward slashes (what the DB stores and the web serves)"""
+        return os.path.relpath(path, self.root).replace(os.sep, '/')
+
+    def _shipped(self, name):
+        return os.path.join(self.shipped_assets, name) if self.shipped_assets else None
+
     def signatures(self):
-        if self._sig is None: self._sig = Library(os.path.join(self.root, 'assets', 'signatures.json'))
+        if self._sig is None:
+            with self._lock:
+                if self._sig is None:
+                    lib = Library(os.path.join(self.root, 'assets', 'signatures.json'), shipped=self._shipped('signatures.json'))
+                    if lib.adopted:                          # a newer release names what was unknown here: fill the matches too
+                        with self.Session.begin() as s:
+                            for sid in lib.adopted: self._fill_label(s, sid, lib.items[sid]['kind'], lib.items[sid]['label'])
+                        lib.save()
+                    self._sig = lib
         return self._sig
 
     def weapon_icons(self):
         """weapon icon templates cut from our result screens (assets/weapon_icons_captured) and their samples (data/icon_samples)"""
         if self._icons is None:
-            self._icons = IconLibrary(os.path.join(self.root, 'assets', 'weapon_icons_captured'), os.path.join(self.root, 'data', 'icon_samples'))
+            with self._lock:
+                if self._icons is None:
+                    self._icons = IconLibrary(os.path.join(self.root, 'assets', 'weapon_icons_captured'), os.path.join(self.root, 'data', 'icon_samples'),
+                                              shipped_dir=self._shipped('weapon_icons_captured'))
         return self._icons
 
     def save_libraries(self):
@@ -93,40 +118,35 @@ class Store:
 
     # ------------------------------------------------------------------ files
     def save_image(self, stamp, kind, frame):
-        """PNG of a screen (rule / result / medals) -> repo-relative path"""
+        """PNG of a screen (rule / result / medals) -> path relative to the data folder"""
         os.makedirs(self.images_dir, exist_ok=True)
         p = os.path.join(self.images_dir, f'{stamp}_{kind}.png'); cv2.imencode('.png', frame)[1].tofile(p)
-        return rel(p)
+        return self.rel(p)
 
     def save_json(self, stamp, name, obj):
         os.makedirs(self.images_dir, exist_ok=True)
         p = os.path.join(self.images_dir, f'{stamp}{name}.json')
         json.dump(obj, open(p, 'w', encoding='utf-8'), ensure_ascii=False, indent=1, default=str)
-        return rel(p)
+        return self.rel(p)
 
     def save_evidence(self, name, sheet):
-        """contact sheet for a suspected miss (own death without a bubble) -> repo-relative path"""
+        """contact sheet for a suspected miss (own death without a bubble) -> path relative to the data folder"""
         os.makedirs(self.misses_dir, exist_ok=True)
         p = os.path.join(self.misses_dir, name + '.jpg'); cv2.imencode('.jpg', sheet, [cv2.IMWRITE_JPEG_QUALITY, 80])[1].tofile(p)
-        return rel(p)
+        return self.rel(p)
 
     def save_bubble(self, name, sheet):
-        """best killer-card crop of a death bubble + the frame it came from -> repo-relative path"""
+        """best killer-card crop of a death bubble + the frame it came from -> path relative to the data folder"""
         os.makedirs(self.bubbles_dir, exist_ok=True)
         p = os.path.join(self.bubbles_dir, name + '.jpg'); cv2.imencode('.jpg', sheet, [cv2.IMWRITE_JPEG_QUALITY, 85])[1].tofile(p)
-        return rel(p)
+        return self.rel(p)
 
     def prune_images(self, keep_days=7, dry=False):
         """delete screen PNGs (samples/matches) and bubble / miss evidence JPGs older than `keep_days` (file mtime), so the
-        folders stop growing. Kept: git-tracked files (fixtures), the screens that show an unlabelled signature (the labelling
-        page needs them), the per-match JSON. Match rows pointing at a deleted screen get that column cleared.
-        Returns the deleted repo-relative paths (what would be deleted when dry)."""
-        try:
-            out = subprocess.run(['git', 'ls-files', '-z', 'samples'], cwd=self.root, capture_output=True, check=True).stdout
-            tracked = {p for p in out.decode('utf-8').split('\0') if p}
-        except Exception as e:
-            print(f'[prune_images] git ls-files failed, nothing deleted: {e!r}', flush=True); return []
-        keep = set(tracked)
+        folders stop growing. Kept: the screens that show an unlabelled signature (the labelling page needs them) and the
+        per-match JSON. Match rows pointing at a deleted screen get that column cleared.
+        Returns the deleted paths, relative to the data folder (what would be deleted when dry)."""
+        keep = set()
         for it in self.unlabelled_signatures():
             for ex in self.signature_examples(it['id']):
                 keep.update(ex.get(k) for k in ('result_image', 'medal_image', 'rule_image') if ex.get(k))
@@ -251,13 +271,16 @@ class Store:
         if sid not in lib.items: raise KeyError(sid)
         with self._lock, self.Session.begin() as s:
             lib.label(sid, label); lib.save()
-            # medals / stages / modes / rules already stored under the id become readable
-            s.execute(update(Medal).where(Medal.sig_id == sid).values(name=label))
-            kind = lib.items[sid]['kind']
-            if kind in ('stage', 'mode', 'rule', 'title'):                  # title = the rule name on the rule screen: fills rule too
-                col = getattr(Match, 'rule' if kind == 'title' else kind)
-                s.execute(update(Match).where(col.is_(None), Match.raw_json.like(f'%"{kind}_id": "{sid}"%')).values({col.key: label}))
+            self._fill_label(s, sid, lib.items[sid]['kind'], label)
         self.events.publish('signatures_changed', {'id': sid})
+
+    @staticmethod
+    def _fill_label(s, sid, kind, label):
+        """medals / stages / modes / rules already stored under the id become readable"""
+        s.execute(update(Medal).where(Medal.sig_id == sid).values(name=label))
+        if kind in ('stage', 'mode', 'rule', 'title'):                      # title = the rule name on the rule screen: fills rule too
+            col = getattr(Match, 'rule' if kind == 'title' else kind)
+            s.execute(update(Match).where(col.is_(None), Match.raw_json.like(f'%"{kind}_id": "{sid}"%')).values({col.key: label}))
 
     def signature_examples(self, sid, limit=3):
         """where an unlabelled signature was seen: match ids + image paths (medal screen / rule + result screen) for showing it to a human"""
@@ -272,13 +295,13 @@ class Store:
 
     # ------------------------------------------------------------------ unknown weapon icons (named like the signatures)
     def unknown_weapon_icons(self, limit=3):
-        """the unknown icon groups: id, the wiki's guess (None for an icon nothing matched), their sample crops (repo-relative
-        paths) and where they were seen (match id, row, result screen), newest first"""
+        """the unknown icon groups: id, the wiki's guess (None for an icon nothing matched), their sample crops (paths
+        relative to the data folder) and where they were seen (match id, row, result screen), newest first"""
         lib = self.weapon_icons(); out = []
         with self.Session() as s:
             for gid in lib.groups():
                 d = os.path.join(lib.samples_dir, group_name(gid))
-                samples = [rel(os.path.join(d, st + '.png')) for st in lib.sample_stems(group_name(gid)) if os.path.exists(os.path.join(d, st + '.png'))]
+                samples = [self.rel(os.path.join(d, st + '.png')) for st in lib.sample_stems(group_name(gid)) if os.path.exists(os.path.join(d, st + '.png'))]
                 seen = []
                 for mid, img, raw in s.execute(select(Match.id, Match.result_image, Match.raw_json).where(Match.raw_json.like(f'%"weapon_unknown": "{gid}"%'))
                                                .order_by(Match.id.desc()).limit(limit)):
@@ -353,7 +376,7 @@ def main():
     from app import config
     days = a.days if a.days is not None else config.image_keep_days()
     gone = s.prune_images(keep_days=days, dry=a.dry); s.close()
-    size = sum(os.path.getsize(os.path.join(ROOT, p)) for p in gone) if a.dry else None
+    size = sum(os.path.getsize(os.path.join(s.root, p)) for p in gone) if a.dry else None
     print(f"{'would delete' if a.dry else 'deleted'} {len(gone)} images older than {days:g} days" + (f' ({size / 2**20:.0f} MB)' if size is not None else ''))
 
 

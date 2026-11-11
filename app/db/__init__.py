@@ -6,8 +6,8 @@ missing file at the current schema and refuses an outdated one; migrating an exi
     python -m app.db init|upgrade|current|stats|matches [--db PATH]
 """
 from .engine import DEFAULT_DB, make_engine, make_session_factory
-from .migrate import SchemaOutdated, upgrade, require_current, current_revision, head_revision
+from .migrate import SchemaOutdated, upgrade, require_current, current_revision, head_revision, known_revisions
 from .models import Base, Event, Match, MatchPlayer, Medal, Timeline, Weapon
 
 __all__ = ['DEFAULT_DB', 'make_engine', 'make_session_factory', 'SchemaOutdated', 'upgrade', 'require_current',
-           'current_revision', 'head_revision', 'Base', 'Event', 'Match', 'MatchPlayer', 'Medal', 'Timeline', 'Weapon']
+           'current_revision', 'head_revision', 'known_revisions', 'Base', 'Event', 'Match', 'MatchPlayer', 'Medal', 'Timeline', 'Weapon']

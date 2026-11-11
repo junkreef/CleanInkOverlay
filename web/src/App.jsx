@@ -126,7 +126,7 @@ export default function App() {
   return (
     <div className="app">
       <header>
-        <h1><a href="#/matches">CleanInkOverlay</a></h1>
+        <h1 title={summary?.version ? `バージョン ${summary.version}` : undefined}><a href="#/matches">CleanInkOverlay</a></h1>
         <nav>
           {TABS.map(([k, label]) => (
             <a key={k} href={`#/${k}`} className={r.tab === k ? 'active' : ''}>

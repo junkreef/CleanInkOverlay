@@ -4,9 +4,10 @@
     uv run python -m app.backend --live [--device N] # also start the recorder on the OBS Virtual Camera
     options: --db PATH  --port N  --host H  --dry
     settings: config.toml (optional; config.example.toml lists them), e.g. how many days of screen images to keep
+The release package starts it through app.launch (data folder outside the program, schema upgrade, browser).
 
 REST  (all JSON)
-  GET  /api/summary                       counts, last match id, unlabelled signature count
+  GET  /api/summary                       counts, last match id, unlabelled signature count, program version
   GET  /api/matches?limit=&offset=        newest first, with my row
   GET  /api/matches/{id}                  match + players + events + medals
   DELETE /api/matches/{id}
@@ -38,11 +39,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if ROOT not in sys.path: sys.path.insert(0, ROOT)
-from app import config
+from app import config, paths
 from app.store import Store
 from app.recorder import RecorderRunner
 
 WEB_DIST = os.path.join(ROOT, 'web', 'dist')
+VERSION = paths.version()
 state = {'store': None, 'runner': None, 'clients': set(), 'queue': None, 'loop': None, 'last_id': 0, 'db_path': None, 'live': False, 'device': None, 'dry': False, 'session_start': None}
 
 
@@ -115,7 +117,7 @@ app = FastAPI(title='CleanInkOverlay', lifespan=lifespan)
 # ------------------------------------------------------------------ REST
 @app.get('/api/summary')
 def api_summary():
-    return store().summary()
+    return {**store().summary(), 'version': VERSION}
 
 
 @app.get('/api/matches')
@@ -296,12 +298,12 @@ else:
         return JSONResponse({'message': 'frontend not built: cd web && npm install && npm run build', 'api': '/docs'})
 
 
-def main():
+def main(argv=None):
     import uvicorn
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--host', default='127.0.0.1'); ap.add_argument('--port', type=int, default=8000)
     ap.add_argument('--db'); ap.add_argument('--live', action='store_true'); ap.add_argument('--device', type=int); ap.add_argument('--dry', action='store_true')
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     state.update(db_path=os.path.abspath(a.db) if a.db else None, live=a.live, device=a.device, dry=a.dry)
     uvicorn.run(app, host=a.host, port=a.port, log_level='info')
 

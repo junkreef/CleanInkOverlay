@@ -3,7 +3,8 @@
 A missing file is created at the current revision. An existing file is migrated only on request:
 `uv run python -m app.db upgrade [--db PATH]` (stop the backend first); it copies the file to
 <db>.bak-<date>-<old revision> before applying anything, and a migration runs inside one transaction.
-The store refuses an outdated file (`require_current`) instead of migrating it.
+The store refuses an outdated file (`require_current`) instead of migrating it; the release launcher (app.launch)
+runs the upgrade at every start, since its users have no command line.
 Files from before the SQLAlchemy move (no alembic_version table) are not handled any more: the one-off
 migration for those lived in commit 4cba342 (branch sqlalchemy-migration, 2026-09-17).
 """
@@ -34,9 +35,18 @@ def current_revision(db_path):
         return MigrationContext.configure(con).get_current_revision()
 
 
-def head_revision():
+def scripts():
     cfg = Config(); cfg.set_main_option('script_location', MIGRATIONS)
-    return ScriptDirectory.from_config(cfg).get_current_head()
+    return ScriptDirectory.from_config(cfg)
+
+
+def head_revision():
+    return scripts().get_current_head()
+
+
+def known_revisions():
+    """every revision this code can migrate from; a file stamped with another one was written by a newer version"""
+    return {r.revision for r in scripts().walk_revisions()}
 
 
 def backup(db_path, tag):

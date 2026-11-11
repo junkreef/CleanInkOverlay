@@ -3,9 +3,9 @@ so the recorder thread and the web workers can read and write the same file conc
 import os
 from sqlalchemy import URL, create_engine, event
 from sqlalchemy.orm import sessionmaker
+from ..paths import DATA_ROOT
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-DEFAULT_DB = os.path.join(ROOT, 'data', 'splatoon.db')
+DEFAULT_DB = os.path.join(DATA_ROOT, 'data', 'splatoon.db')
 
 
 def db_url(path=DEFAULT_DB):

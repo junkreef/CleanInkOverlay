@@ -1,4 +1,5 @@
-"""Settings that may differ per installation, read from config.toml next to pyproject.toml.
+"""Settings that may differ per installation, read from config.toml in the data folder (app.paths.DATA_ROOT: next to
+pyproject.toml in a git checkout, %LOCALAPPDATA%\\CleanInkOverlay for a release).
 
 The file is optional and not in git: copy config.example.toml (every setting with its default) and change what you need.
 A missing file or key means the default; a bad value stops with a message naming the key.
@@ -8,9 +9,9 @@ A missing file or key means the default; a bad value stops with a message naming
     config.adobe_fonts_kit()      # [overlay] adobe_fonts_kit
 """
 import os, tomllib
+from .paths import DATA_ROOT
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-PATH = os.path.join(ROOT, 'config.toml')
+PATH = os.path.join(DATA_ROOT, 'config.toml')
 DEFAULTS = {'images': {'keep_days': 7}, 'overlay': {'adobe_fonts_kit': ''}}
 
 

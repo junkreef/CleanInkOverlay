@@ -140,19 +140,28 @@ def group_id(name):
     return name[len(UNKNOWN) + 1:] if name and name.startswith(UNKNOWN + '/') else None
 
 
+def load_templates(d):
+    """name -> RGBA template for every <name>.png in a folder ({} when it is missing)"""
+    out = {}
+    for f in os.listdir(d) if d and os.path.isdir(d) else []:
+        if f.endswith('.png'):
+            im = imread_u(os.path.join(d, f))
+            if im is not None and im.ndim == 3 and im.shape[2] == 4: out[f[:-4]] = im
+    return out
+
+
 class IconLibrary:
     """templates + their samples. add_sample() collects in memory and rebuilds the template; save() writes both
     (Store owns the instance and calls save, like the signature library). `version` counts template changes, so a holder
     of loaded icon sets (the recorder) knows when to reload them."""
 
-    def __init__(self, captured_dir=CAPTURED_DIR, samples_dir=SAMPLES_DIR):
+    def __init__(self, captured_dir=CAPTURED_DIR, samples_dir=SAMPLES_DIR, shipped_dir=None):
+        """shipped_dir: the templates that came with the program, when captured_dir is the user's own folder (a release
+        keeps the program folder read-only, app.paths). They are loaded first and never written; a template rebuilt
+        from local samples goes to captured_dir and wins from then on."""
         self.captured_dir, self.samples_dir = captured_dir, samples_dir
-        self.templates = {}
-        if os.path.isdir(captured_dir):
-            for f in os.listdir(captured_dir):
-                if f.endswith('.png'):
-                    im = imread_u(os.path.join(captured_dir, f))
-                    if im is not None and im.ndim == 3 and im.shape[2] == 4: self.templates[f[:-4]] = im
+        self.shipped_templates = load_templates(shipped_dir)
+        self.templates = {**self.shipped_templates, **load_templates(captured_dir)}
         self.pending = {}           # name -> [(file stem, crop)] not written yet
         self.dirty = set()          # names whose template changed (or was dropped) since the last save
         self.dropped = set()        # sample files to delete on save
@@ -245,7 +254,9 @@ class IconLibrary:
             if p in self.dropped or not os.path.exists(p): raise KeyError(f'{name}/{stem}')
             crop = imread_u(p, cv2.IMREAD_COLOR); self.dropped.add(p)
         if self.sample_stems(name): self.rebuild(name, wiki)
-        else: self.templates.pop(name, None); self.dirty.add(name); self.version += 1
+        else:                                                     # back to the shipped template, if there is one
+            self.templates.pop(name, None); self.dirty.add(name); self.version += 1
+            if name in self.shipped_templates: self.templates[name] = self.shipped_templates[name]; self.shipped.add(name)
         return bool(to) and self.add_sample(to, crop, stem, wiki_to)
 
     def save(self):
@@ -265,7 +276,7 @@ class IconLibrary:
                     if not os.listdir(d): os.rmdir(d)
                 continue
             p = os.path.join(self.captured_dir, name + '.png')
-            if name in self.templates: imwrite_u(p, self.templates[name])
+            if name in self.templates and self.templates[name] is not self.shipped_templates.get(name): imwrite_u(p, self.templates[name])
             elif os.path.exists(p): os.remove(p)
         changed = bool(self.pending or self.dirty or self.dropped)
         self.pending, self.dirty, self.dropped = {}, set(), set()

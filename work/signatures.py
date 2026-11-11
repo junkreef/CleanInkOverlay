@@ -37,16 +37,33 @@ def signature(bgr, thr=190, max_chroma=40):
     return cv2.resize(m * 255, SIZE, interpolation=cv2.INTER_AREA).astype(np.float32).ravel() / 255
 
 
+def load_items(path):
+    """id -> {kind, label, sig} of a library file ({} when it is missing)"""
+    if not path or not os.path.exists(path): return {}
+    with open(path, encoding='utf-8') as fh: items = json.load(fh)
+    return {k: it for k, it in items.items() if it.get('kind') not in DROPPED_KINDS}
+
+
 class Library:
-    def __init__(self, path=LIB):
+    def __init__(self, path=LIB, shipped=None):
+        """shipped: the library that came with the program, when `path` is the user's own file (a release keeps the
+        program folder read-only, app.paths). Its entries are loaded first and never written back: the user's file only
+        holds what the user added (new ids, own labels), so a newer release's labels reach every installation.
+        `adopted` lists the ids the user's file had without a label that the shipped library names now."""
         self.path = path
-        items = json.load(open(path, encoding='utf-8')) if os.path.exists(path) else {}  # id -> {kind, label, sig}
-        self.items = {k: it for k, it in items.items() if it.get('kind') not in DROPPED_KINDS}
+        self.shipped = load_items(shipped)
+        self.items = {k: dict(it) for k, it in self.shipped.items()}
+        self.adopted = []
+        for k, it in load_items(path).items():
+            if k in self.shipped and not it.get('label'):            # the same text, registered here before it shipped
+                if self.shipped[k].get('label'): self.adopted.append(k)
+                continue
+            self.items[k] = it
 
     def save(self, drop=()):
         """merge with the file first: a label added by another process (e.g. labelling a new stage while the
         recorder runs) must not be overwritten by this process's older in-memory copy. drop = ids being deleted
-        on purpose: they are not taken back from the file"""
+        on purpose: they are not taken back from the file (a shipped entry comes back with the next load)"""
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         if os.path.exists(self.path):
             try:
@@ -57,7 +74,8 @@ class Library:
                     elif it.get('label') and not self.items[k].get('label'): self.items[k]['label'] = it['label']
             except (OSError, ValueError):
                 pass
-        json.dump(self.items, open(self.path, 'w', encoding='utf-8'), ensure_ascii=False)
+        own = {k: it for k, it in self.items.items() if k not in self.shipped or it.get('label') != self.shipped[k].get('label')}
+        with open(self.path, 'w', encoding='utf-8') as fh: json.dump(own, fh, ensure_ascii=False)
 
     def identify(self, sig, kind, add_unknown=True, thr=MATCH_THR):
         """returns (id, label_or_None, score); thr = minimum correlation to count as the same text"""

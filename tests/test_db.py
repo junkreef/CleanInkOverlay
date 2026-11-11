@@ -173,10 +173,10 @@ def test_check_constraints_are_enforced(tmp_path):
     s.close()
 
 
-def test_prune_images_drops_old_untracked_screens_and_clears_the_rows(tmp_path):
-    """old screens go (and the match row forgets them); recent ones, the screens of unlabelled signatures and git-tracked files stay"""
-    import subprocess, time
-    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
+def test_prune_images_drops_old_screens_and_clears_the_rows(tmp_path):
+    """old screens go (and the match row forgets them); recent ones and the screens of unlabelled signatures stay.
+    Nothing but the files decides: a release has neither git nor a repository around its data folder"""
+    import time
     s = Store(root=str(tmp_path), db_path=str(tmp_path / 'p.db'))
     old = time.time() - 30 * 86400
     def screen(name, age=old):
@@ -187,13 +187,12 @@ def test_prune_images_drops_old_untracked_screens_and_clears_the_rows(tmp_path):
                          players, events, medals=[dict(name='ナワバリ王', rank='gold', position=0)], timeline=timeline)
     s.insert_match(dict(match, medal_image=screen('b_medals.png')), players, events, medals, timeline)    # shows unlabelled m_abcd / s_test1
     s.signatures().items.update({'m_abcd': {'kind': 'medal'}, 's_test1': {'kind': 'stage'}})
-    recent = screen('c_rule.png', age=time.time()); tracked = screen('d_rule.png')
-    subprocess.run(['git', 'add', tracked], cwd=tmp_path, check=True)
+    screen('c_rule.png', age=time.time())
     (tmp_path / 'samples' / 'matches' / 'a.json').write_text('{}'); os.utime(tmp_path / 'samples' / 'matches' / 'a.json', (old, old))
     assert sorted(s.prune_images(keep_days=7, dry=True)) == ['samples/matches/a_medals.png', 'samples/matches/a_result.png', 'samples/matches/a_rule.png']
     assert (tmp_path / 'samples' / 'matches' / 'a_rule.png').exists()                                      # dry: nothing removed
     s.prune_images(keep_days=7)
-    assert sorted(os.listdir(tmp_path / 'samples' / 'matches')) == ['a.json', 'b_medals.png', 'c_rule.png', 'd_rule.png']
+    assert sorted(os.listdir(tmp_path / 'samples' / 'matches')) == ['a.json', 'b_medals.png', 'c_rule.png']
     m = s.get_match(mid); assert (m['rule_image'], m['result_image'], m['medal_image']) == (None, None, None)
     s.close()
 
