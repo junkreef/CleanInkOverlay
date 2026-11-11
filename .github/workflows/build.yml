@@ -1,6 +1,6 @@
 # Every push: the tests, then the release package (tools/build_release.py) and a start of it the way a user would
 # (tools/smoke_release.py). The zip is kept as a workflow artifact.
-# A tag v<version> (the version in pyproject.toml) also puts the zip on a DRAFT release: look at it on the Releases
+# A tag v<version> (the version in pyproject.toml) also puts the zip on a DRAFT release (replacing an earlier draft of that tag): look at it on the Releases
 # page and press "Publish release" to make it public.
 name: build
 
@@ -84,5 +84,10 @@ jobs:
           Python などを入れる必要はありません。くわしくは zip の中の「はじめにお読みください.txt」か [README](https://github.com/${GH_REPO}#readme) を見てください。
 
           新しいバージョンにするときも同じです。記録は \`%LOCALAPPDATA%\\CleanInkOverlay\` に残るので、そのまま引き継がれます。
+
           EOF
+          # a tag pushed again replaces its unpublished draft; a published release is never touched (create fails on it)
+          for id in $(gh api "repos/${GH_REPO}/releases" --jq ".[] | select(.draft and .tag_name == \"${TAG}\") | .id"); do
+            gh api -X DELETE "repos/${GH_REPO}/releases/${id}"
+          done
           gh release create "$TAG" CleanInkOverlay-*.zip --draft --verify-tag --title "CleanInkOverlay $TAG" --notes-file notes.md --generate-notes
