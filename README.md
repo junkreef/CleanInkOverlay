@@ -4,6 +4,16 @@
 リザルト画面・試合中の HUD・ルール画面を画像解析して、勝敗・塗りポイント・キル/デス・スペシャル・武器・ステージ・
 ガチルールのカウントなどを SQLite に保存し、Web 画面で戦績を見たり、配信用のオーバーレイに出したりできます。
 
+![配信オーバーレイ：ゲーム画面の右と下に、配信中の戦績と直近のバトルを表示](docs/images/overlay.jpg)
+
+<p>
+  <a href="docs/images/web_matches.png"><img src="docs/images/web_matches.png" width="32%" alt="試合一覧"></a>
+  <a href="docs/images/web_match.png"><img src="docs/images/web_match.png" width="32%" alt="試合詳細：8 人の成績、表彰、キル/デスの時系列"></a>
+  <a href="docs/images/web_stats.png"><img src="docs/images/web_stats.png" width="32%" alt="統計：日別・ステージ別・武器別"></a>
+</p>
+
+上：配信オーバーレイ（OBS でゲーム画面に重ねたところ）。下：Web 画面の試合一覧・試合詳細・統計。
+
 ## できること
 
 - **自動記録**：OBS 仮想カメラ（またはキャプチャデバイス）の映像から、試合の開始〜リザルトを検出して記録
