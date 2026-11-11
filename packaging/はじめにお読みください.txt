@@ -104,6 +104,9 @@ Windows が「発行元を確認できません」「Windows によって PC が
 
 知られている制限は https://github.com/junkreef/CleanInkOverlay/blob/main/docs/limitations.md にあります。
 
+「こんな機能が欲しい」「配信の表示をこんなレイアウトにしてほしい」といった要望も大歓迎です。
+同じく下の URL の Issues に気軽に書いてください。
+
 
 ■ 配布元・ライセンス
 ------------------------------------------------------------
