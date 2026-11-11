@@ -39,7 +39,7 @@ CleanInkOverlay/
 opencv-python には、動画ファイルを読むための FFmpeg が DLL (`cv2/opencv_videoio_ffmpeg500_64.dll`) で付いてくる。zip にもそのまま入れている。
 
 - 録画の解析 (`python -m app.recorder --video FILE`) はこのデコーダーでないと正しく読めない ([architecture.md](architecture.md#動かし方))。ライブの取り込み (DirectShow) は cv2 本体だけで動く。
-- 中身は OpenCV プロジェクトがビルドした FFmpeg n7.1 + libvpx v1.16.0 + aom v3.14.1 で、GPL や non-free の部品は入っていない (DLL の中の configure の行に `--enable-gpl` / `--enable-nonfree` が無い)。ライセンスは **LGPL 2.1 以降**。
+- 中身は OpenCV プロジェクトがビルドした FFmpeg n7.1 + libvpx v1.16.0 + aom v3.14.1 で、GPL や non-free の部品は入っていない。OpenH264 は v2.5.0 の API ヘッダーだけを使ってビルドされていて、本体は入っていない (別に入れてあれば使う) (DLL の中の configure の行に `--enable-gpl` / `--enable-nonfree` が無い)。ライセンスは **LGPL 2.1 以降**。
 - LGPL のバイナリを配るので、`THIRD_PARTY_NOTICES.txt` に次を書いている: 何であるか、ライセンス (本文は `cv2\LICENSE-3RD-PARTY.txt`)、差し替えてよいこと、ビルド元 (`opencv/opencv_3rdparty` のコミット `06dc20ca…`、ブランチ `ffmpeg/5.x_20260602`) と、そこにあるソース取得スクリプト (`ffmpeg/download_src.sh`)・ビルドスクリプト。ソースのアーカイブそのものはリリースに付けていない (opencv-python を同梱するほかのプロジェクトと同じやり方。2026-11-12 の判断)。
 - これらの事実は `build_release.py` の `FFMPEG_PLUGIN` に、DLL の MD5 と一緒に固定してある。opencv-python を上げて DLL が変わるとビルドが止まるので、OpenCV の `3rdparty/ffmpeg/ffmpeg.cmake` (バイナリのコミットと MD5)、そのコミットの `ffmpeg/download_src.sh` (各ソースのタグ)、DLL の中の configure の行を見直して書き換える。
 
