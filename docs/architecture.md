@@ -15,7 +15,8 @@
 |---|---|
 | `recorder.py` | 状態機械、試合の組み立て ([recorder.md](recorder.md)) |
 | `hud.py` | 試合中の HUD ([hud.md](hud.md)) |
-| `scan_screens.py` (`looks_like_rule`)、`rule_screen.py` | ルール画面の判定、カード、ルール名 |
+| `scan_screens.py` (`looks_like_rule`、判定ごとの値は `rule_checks`)、`rule_screen.py` | ルール画面の判定、カード、ルール名 |
+| `rule_miss.py` | ルール画面を見逃して IDLE のまま試合が始まったときの診断 (ログと証拠のコマ、[recorder.md](recorder.md#証拠の画像)) |
 | `result_parser.py`、`live_result_watch.py` (`looks_like_result`) | リザルト表、グリフ集、バナー ([result_screens.md](result_screens.md)) |
 | `judge.py`、`counts.py` | ジャッジくん画面の勝敗・%、ガチのカウント |
 | `panel.py`、`medals.py` | 個人パネル (自分の行)、表彰 |
@@ -66,7 +67,7 @@ uv run python -m app.recorder --video FILE [--from 秒 --to 秒]   # 録画を�
 | `data/splatoon.db` | 記録 (SQLite、WAL) | しない |
 | `samples/matches/` | 試合ごとの画面 PNG (`{stamp}_rule.png` / `_result.png` / `_medals.png` / `_judge.png`) と試合 JSON (`{stamp}.json`、`--debug` なら `{stamp}_samples.json`) | しない |
 | `samples/bubbles/` | やられた吹き出しの照合の証拠 (相手カードの切り出し + その時刻のフレーム) | しない |
-| `samples/misses/` | 吹き出しの出なかった自分のデスの前後のコマを並べた画像 | しない |
+| `samples/misses/` | 吹き出しの出なかった自分のデスの前後のコマを並べた画像。ルール画面を見逃した試合の直前 30 秒のコマ (`*_rule_missed.jpg`、原寸の HUD といちばん近かったコマは `samples/matches/*_rule_missed_*.png`) | しない |
 | `data/icon_samples/` | ブキアイコンのサンプル (リザルト行の切り出し) と未知アイコンのグループ | しない |
 | `assets/weapon_icons_captured/` | 自前のブキアイコンのテンプレート (RGBA 56 px) | する |
 | `assets/glyphs/` | 数字のグリフ集 | する |

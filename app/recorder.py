@@ -82,6 +82,9 @@ def run_live(store, device=None, minutes=None, dry=False, debug=False, log=print
             ok, f = cap.retrieve()
             if not ok: continue
             nxt += 0.1; n += 1
+            if n == 1:                                        # what the device really delivers (asked for 1920x1080): the first thing to read in a user's log
+                log(f'first frame {f.shape[1]}x{f.shape[0]}, device reports {cap.get(3):.0f}x{cap.get(4):.0f} at {cap.get(5):.1f} fps'
+                    + ('' if f.shape[:2] == (1080, 1920) else ' - NOT 1920x1080: no screen will be recognised'))
             rec.process(f, now)
             if n % 600 == 0: log(f'... {rec.state} {time.strftime("%H:%M:%S")}')
     finally:
