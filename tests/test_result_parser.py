@@ -37,12 +37,30 @@ def test_the_stage_name_moves_left_after_a_short_rule_name():
     for name, x, rule, stage in (('results/yagura2.png', 1005, 'ガチヤグラ', 'チョウザメ造船'),     # 2026-10-28_23-06-42.mp4
                                  ('results/asari1.png', 1005, 'ガチアサリ', 'バイガイ亭'),          # 2026-10-29_22-02-57.mp4
                                  ('results/area1.png', 1005, 'ガチエリア', 'マヒマヒリゾート＆スパ'),  # 2026-11-04_22-59-07.mp4
-                                 ('gachi_scoreboard_ko.png', 1061, None, 'スメーシーワールド'),     # ガチホコバトル
+                                 ('gachi_scoreboard_ko.png', 1061, 'ガチホコバトル', 'スメーシーワールド'),  # named 2026-11-12
                                  ('0268_result_scoreboard.png', 1061, 'ナワバリバトル', 'コンブトラック')):
         f = cv2.imread(os.path.join(ROOT, 'work', 'frames', name))
         assert stage_x(f) == x, name
         assert banner_identify(f, 'stage', lib, add_unknown=False)[1] == stage, name
         assert banner_identify(f, 'rule', lib, add_unknown=False)[1] == rule, name
+
+
+def test_modes_that_differ_in_their_bracket_are_told_apart():
+    """'バンカラマッチ(オープン)' was stored as '(チャレンジ)': the mode canvas ends inside the bracket and the two
+    correlate 0.88, above BANNER_THR (2026-11-12). mode_tag_bankara_open.png is that tag alone, cut from a result screen"""
+    import cv2
+    from result_parser import banner_identify, BANNER_THR, MODE_THR
+    from signatures import Library
+    tag = cv2.imread(os.path.join(ROOT, 'work', 'frames', 'mode_tag_bankara_open.png'))
+    f = frame_with(); f[36:76, 820:1060] = tag
+    lib = Library()
+    sid, label, score = banner_identify(f, 'mode', lib, add_unknown=False)
+    assert label == 'バンカラマッチ(オープン)' and score > 0.99
+    challenge = cv2.imread(os.path.join(ROOT, 'work', 'frames', 'gachi_scoreboard_ko.png'))
+    assert banner_identify(challenge, 'mode', lib, add_unknown=False)[1] == 'バンカラマッチ(チャレンジ)'
+    del lib.items[sid]                                                   # a library that has never seen (オープン)
+    unknown = banner_identify(f, 'mode', lib, add_unknown=False)
+    assert unknown[:2] == (None, None) and BANNER_THR < unknown[2] < MODE_THR   # not taken for (チャレンジ): it gets its own entry
 
 
 def test_rows_of_the_labelled_scoreboards():

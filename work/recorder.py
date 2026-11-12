@@ -631,7 +631,9 @@ class Recorder:
             c = res['counts']; mine, theirs = ('win_points', 'lose_points') if res['self_result'] != 'lose' else ('lose_points', 'win_points')
             cf = count_fields(c, c[mine], c[theirs])
         rule = banner.get('rule') or m.get('title')                # the scoreboard's banner, else the rule screen's name
-        turf = not m.get('nonturf') and rule in (None, 'ナワバリバトル')   # only ナワバリ has the % bar; the others show counts / ノックアウト! there
+        # only ナワバリ has the % bar; the others show counts / ノックアウト! there. A count read on the scoreboard says so too:
+        # with no rule screen and a rule name nobody had named yet, the count bar was stored as a % (first Xマッチ, 2026-11-12: 99 - 55 as 999.0 - 559.0)
+        turf = not m.get('nonturf') and rule in (None, 'ナワバリバトル') and cf['my_count'] is None and cf['enemy_count'] is None
         raw = strip(res) if res else dict(panel={k: v for k, v in panel.items() if k != 'weapon_sig'}) if panel else None
         if m.get('title_id'): raw = dict(raw or {}, title_id=m['title_id'])   # lets a later name of the rule screen fill rule
         match = dict(started_at=started.isoformat(timespec='seconds'), ended_at=None, mode=banner.get('mode'), rule=rule,

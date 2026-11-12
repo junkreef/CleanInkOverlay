@@ -31,6 +31,8 @@ BANNER_SCALE = 0.5               # signature = the canvas mask at half resolutio
 BANNER_MIN_W = 40                # px: narrower white is no text (the shortest banner text, バイガイ亭, is 86 px wide; an 8 px
                                  # speck once became an unlabelled "stage" s_da06710c that no screen showed, 2026-10-18)
 BANNER_THR = 0.85                # same text on another screen correlates >= 0.99, the closest different stage names 0.61
+MODE_THR = 0.95                  # modes that differ only in their bracket: 'バンカラマッチ(オープン)' is 0.88 to '(チャレンジ)' (the canvas
+                                 # ends inside the bracket) and was stored as it, 2026-11-12; the same mode gave >= 0.99 on 480 saved screens
 HOLES = {'0': 1, '6': 1, '9': 1, 'p': 1, '8': 2}               # enclosed holes of the row glyphs (others 0): every labelled glyph
 HOLE_SETS = ('big', 'small', 'panel_big', 'panel_small')        # has them. The mean templates alone read small 08 as 06 / 00
                                  # (101 rows of the stored scoreboards, 11 panels) and 06 as 08 (2026-10-29)
@@ -168,7 +170,7 @@ def banner_signature(f, kind, x=None):
 def banner_identify(f, kind, lib, add_unknown=True):
     """(id, label, score) of a banner text in the library. The stage name is looked up at every start in STAGE_SHIFT
     and the best match counts; a stage name that matches nowhere is added (add_unknown) as read from stage_x"""
-    if kind != 'stage': return lib.identify(banner_signature(f, kind), kind, add_unknown=add_unknown, thr=BANNER_THR)
+    if kind != 'stage': return lib.identify(banner_signature(f, kind), kind, add_unknown=add_unknown, thr=MODE_THR if kind == 'mode' else BANNER_THR)
     x = stage_x(f); best = (None, None, 0.0)
     for d in STAGE_SHIFT:
         r = lib.identify(banner_signature(f, kind, x + d), kind, add_unknown=False, thr=BANNER_THR)

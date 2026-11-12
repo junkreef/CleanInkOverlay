@@ -100,6 +100,16 @@ def test_no_pct_but_for_turf(monkeypatch):
         assert stored_pct(rec, store, monkeypatch, rule) == want, rule  # no rule screen (IDLE): the scoreboard's rule decides
 
 
+def test_counts_on_the_scoreboard_mean_no_pct(monkeypatch):
+    """no rule screen and a rule name on the scoreboard nobody has named yet (first Xマッチ, 2026-11-12): the count bar
+    '99カウント' / '55カウント' was stored as 999.0 % - 559.0 %"""
+    store = FakeStore(); rec = R.Recorder(VIDEO, store, dry=True, log=lambda *a: None)
+    monkeypatch.setattr(R, 'read_scoreboard_counts', lambda f, g: dict(left=dict(count=99, ko=False), right=dict(count=55, ko=False), win_points=495, lose_points=275))
+    assert stored_pct(rec, store, monkeypatch, None) == (None, None)
+    m = store.json[-1]['match']
+    assert (m['my_count'], m['enemy_count'], m['knockout'], m['my_team_points'], m['enemy_team_points']) == (99, 55, 0, 495, 275)
+
+
 def test_judge_votes_per_side():
     """a side's count and points each need 2 frames that agree; a frame where one side is covered still votes for the other"""
     rec, _ = nonturf_match()
