@@ -88,10 +88,11 @@
   <!-- WAIT_RESULT -> IDLE (store) -->
   <path class="edges" d="M150,530 L150,300"/>
   <text x="166" y="350" class="save">保存して待機へ</text>
-  <text x="166" y="372" class="lbl">・リザルト表 (10 コマ): 表の中身で保存</text>
+  <text x="166" y="372" class="lbl">・リザルト表 (10 コマか、消える前の静止したコマ)</text>
   <text x="166" y="394" class="lbl">・スケジュール更新 (3 コマ): リザルト表なしで保存</text>
-  <text x="166" y="416" class="lbl">・300 秒なにも来ない: リザルト表なしで保存</text>
-  <text x="166" y="438" class="lbl">・(録画ファイルのとき) 動画の終わり</text>
+  <text x="166" y="416" class="lbl">・ジャッジ / 表彰が消えて 60 秒: リザルト表なし</text>
+  <text x="166" y="438" class="lbl">・300 秒なにも来ない: リザルト表なしで保存</text>
+  <text x="166" y="460" class="lbl">・(録画ファイルのとき) 動画の終わり</text>
   <!-- WAIT_RESULT -> WAIT_HUD (next rule screen) -->
   <path class="edges" d="M510,550 C650,500 700,340 790,285"/>
   <text x="528" y="370" class="save">次のルール画面:</text>

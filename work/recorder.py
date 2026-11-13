@@ -17,7 +17,8 @@ when it has been stable for a few samples. The state only says what we are accum
   WAIT_RESULT HUD gone; the judge screen (paint % + WIN!/LOSE...), the medal screen and the result screen are picked up
               whenever they show up. Without a result screen (schedule change: the game goes straight back to the
               lobby) the match keeps the judge screen's win / lose and paint %, and the own row + stage from the
-              own result panel (the 表彰 screen, work/panel.py)
+              own result panel (the 表彰 screen, work/panel.py). So it is stored when no scoreboard came AFTER_SCREENS_WAIT
+              after the judge / 表彰 screen went (RESULT_WAIT after the HUD without them)
 A rule screen while INGAME / WAIT_RESULT means the previous match was aborted or its result was skipped.
 A past match played in the replay viewer (メモリープレイヤー, its mark top left: work/replay.py) is not recorded at all
 (watch_replay).
@@ -67,10 +68,24 @@ BUB_EVIDENCE_BELOW = 1.01         # save the best card crop + frame of bubbles s
 RING_SECONDS = 15                 # small frames kept for evidence when an own death shows no bubble
 RING_STEP = 0.5                   # s between them (the miss sheet shows one every 0.5 s; shrinking every sample took 1.6 ms of it)
 STABLE = {'rule': 3, 'medals': 3, 'result': 10, 'schedule': 3}   # 'schedule': the notice shows ~0.9 s
+# 表彰 / result screen: analysed on a still sample, and when the screen goes before its STABLE count (a player pressing
+# つづける! on the scoreboard), its last still sample is analysed then. The panels slide in and out in ~0.1 s, and a moving
+# frame can pass the check yet read wrongly (2026-11-10_00-38-55: the 10th sample was the scoreboard 27 px off, leaving
+# after ~1 s, and the screen was discarded). Still = the panel box differs from the previous sample by at most STILL_MAX
+# (mean abs, every 4th px). Measured 2026-11-13 on 2026-10-11_22-14-08 / 2026-11-04_22-59-07: a settled screen <= 0.65 one
+# sample apart (H.264 noise; 0.0x frame to frame), the slide >= 2.5 up to its last moving frame; 1 px off is 5.4
+STILL_BOX = (300, 1000, 800, 1850)   # y0, y1, x0, x1: the scoreboard's rows and the 表彰 panel, not the animated character left of them
+STILL_MAX = 1.0
+SETTLE = ('medals', 'result')
 JUDGE_LABEL_MIN = 0.9             # label score that counts as a win / lose vote (the real labels score >= 0.98)
 COUNT_FIELDS = ('my_count', 'enemy_count', 'knockout', 'my_team_points', 'enemy_team_points')   # ガチルール: matches columns from work/counts.py
 JUDGE_GAP = 30.0                  # s: judge frames further apart than this belong to different matches
 RESULT_WAIT = 300.0               # s: a match ends without its result screen when nothing came for this long after the end of its HUD (ガチルール: or its judge screen); a schedule change says so at once (on_schedule)
+AFTER_SCREENS_WAIT = 60.0         # s: ... or this long after the last sample of its judge / 表彰 screen, when one was seen (the scoreboard
+                                  # skipped, e.g. つづける! pressed on the おカネ / ランク screen; log2 of 2026-11-13 waited the full 300 s).
+                                  # The scoreboard comes 7.1-12.2 s after the 表彰 screen went (8 recorded matches, ナワバリ and ガチ;
+                                  # the 表彰 screen itself shows 2.5-2.9 s) and at most ~29 s after it appeared (291 live ナワバリ
+                                  # matches since 2026-10-20: 表彰 saved -> scoreboard stored 9.1-29.5 s)
 TITLE_THR = 0.8                   # rule-name signature: the same name >= 0.91 (269 stored ナワバリ screens), ガチホコバトル vs ナワバリバトル 0.63
 RULE_ANALYSIS = {'ナワバリバトル': 'turf', 'ガチヤグラ': 'track', 'ガチホコバトル': 'track', 'ガチエリア': 'zones', 'ガチアサリ': 'zones'}   # other names: 'other'
 OVERTIME_MAX = 300                # s: overtime lasts at most 5 minutes
@@ -157,6 +172,9 @@ class Recorder:
         self.tpl_rsp = imread_u(os.path.join(TPL_DIR, 'respawn.png'), 0)
         self.state = 'IDLE'; self.m = None; self.t_state = 0.0; self.t_last_store = -1e9
         self.scr = None; self.n_scr = 0; self.t_scr = 0.0     # current screen, how many samples it has lasted, since when
+        self.scr_box = None; self.still = None; self.scr_done = False   # 表彰 / result screen: its last sample's STILL_BOX, its last still (t, frame), analysed yet
+        self.t_after = None                                   # last sample of a judge / 表彰 screen (AFTER_SCREENS_WAIT)
+        self.t_gave_up = None                                 # when a match was last stored without its scoreboard by a time limit
         self.t_map = -1e9                                     # when the map was last seen
         self.medals_pending = None                            # (t, medals, image) from the last 表彰 screen
         self.ring = collections.deque()                       # (t, 480x270 frame) every RING_STEP for the last RING_SECONDS
@@ -183,9 +201,10 @@ class Recorder:
                 self.log(f'[{t:8.1f}] replay viewer (メモリープレイヤー) on screen: ignoring the match it plays ({self.state})')
             self.t_replay = t
         if not (mark or self.state in ('IDLE', 'WAIT_RESULT') and t - self.t_replay <= REPLAY_HOLD): return False
+        if self.scr in SETTLE: self.screen_gone(self.scr)       # a scoreboard / panel being counted: what it showed is not lost
         self.scr = 'replay'; self.n_scr = 0
         if self.state == 'WAIT_RESULT' and t - self.t_state > RESULT_WAIT:
-            self.log(f'[{t:8.1f}] no result screen, storing match without it'); self.finish(None, t)
+            self.log(f'[{t:8.1f}] no result screen, storing match without it'); self.t_gave_up = t; self.finish(None, t)
         return True
 
     def process(self, f, t):
@@ -202,13 +221,14 @@ class Recorder:
         elif scr == 'hud' and t - self.t_map <= MAP_AFTER: scr = None   # the map closing: the HUD only half back
         if scr == 'judge' and self.state == 'INGAME' and self.m.get('nonturf'):
             self.state = 'WAIT_RESULT'; self.t_state = t; self.log(f'[{t:8.1f}] judge screen: match over (elapsed {t - self.m["t0"]:.0f}s) -> waiting for result')   # ノックアウト: before the time is up
+        if scr != self.scr and self.scr in SETTLE: self.screen_gone(self.scr)
         self.n_scr = self.n_scr + 1 if scr == self.scr else 1; self.scr = scr
         if self.n_scr == 1: self.t_scr = t                     # when this screen appeared
-        if scr in STABLE and self.n_scr == STABLE[scr]:       # a screen has just become stable: analyse it once
+        if scr in SETTLE: self.settle(scr, f, t)
+        elif scr in STABLE and self.n_scr == STABLE[scr]:     # a screen has just become stable: analyse it once
             if scr == 'rule': self.on_rule(f, t)
-            elif scr == 'medals': self.on_medals(f, t)
-            elif scr == 'result': self.on_result(f, t)
             elif scr == 'schedule': self.on_schedule(t)
+        if scr in ('judge', 'medals'): self.t_after = t
         if scr == 'judge': self.on_judge(f, t)
         if scr == 'rule' and self.state == 'WAIT_HUD' and not self.m.get('cards_at') and t - self.m['t_rule0'] >= RULE_CARDS_AT - 1e-6:
             self.retake_cards(f, t)
@@ -229,8 +249,40 @@ class Recorder:
         elif s == 'INGAME':
             self.sample(f, t, scr == 'hud')
         elif s == 'WAIT_RESULT':
+            after = self.t_after if self.t_after is not None and self.t_after >= self.t_state else None   # this match's judge / 表彰 screen
             if t - self.t_state > RESULT_WAIT:
-                self.log(f'[{t:8.1f}] no result screen, storing match without it'); self.finish(None, t)
+                self.log(f'[{t:8.1f}] no result screen, storing match without it'); self.t_gave_up = t; self.finish(None, t)
+            elif after is not None and t - after > AFTER_SCREENS_WAIT and scr != 'result':   # not while a scoreboard is being counted
+                self.log(f'[{t:8.1f}] no result screen {t - after:.0f}s after the judge / 表彰 screen, storing match without it')
+                self.t_gave_up = t; self.finish(None, t)
+
+    def settle(self, scr, f, t):
+        """a sample of the 表彰 / result screen: analysed once, at its STABLE-th sample if that one is still (as before),
+        else at the last still one (the screen leaving: a moving frame reads wrongly), else as it is"""
+        box = f[STILL_BOX[0]:STILL_BOX[1]:4, STILL_BOX[2]:STILL_BOX[3]:4].astype(np.int16)
+        if self.n_scr == 1: self.still = None; self.scr_done = False
+        still = self.n_scr > 1 and float(np.abs(box - self.scr_box).mean()) <= STILL_MAX
+        self.scr_box = box
+        if self.scr_done: return
+        if still: self.still = (t, f.copy())
+        if self.n_scr >= STABLE[scr]:
+            self.scr_done = True
+            if not still and self.still: self.log(f'[{t:8.1f}] {scr} screen moving at its {self.n_scr}th sample: taking its still sample at {self.still[0]:.1f}')
+            self.analyse(scr, *((t, f) if still or not self.still else self.still))
+
+    def screen_gone(self, scr):
+        """the 表彰 / result screen went before its STABLE count: what it really showed is its last still sample (two
+        samples 0.1 s apart that do not differ). The scoreboard only for a match being recorded: in IDLE a short one
+        would be a match of its own without a timeline"""
+        if not self.scr_done and self.still and (scr == 'medals' or self.state in ('INGAME', 'WAIT_RESULT')):
+            t0 = self.still[0]
+            self.log(f'[{t0:8.1f}] {scr} screen gone after {self.n_scr} samples, before {STABLE[scr]}: taking its last still sample')
+            self.analyse(scr, *self.still)
+        self.still = None; self.scr_done = True
+
+    def analyse(self, scr, t, f):
+        if scr == 'medals': self.on_medals(f, t)
+        else: self.on_result(f, t)
 
     # ------------------------------------------------------------ screens
     def on_rule(self, f, t):
@@ -294,6 +346,10 @@ class Recorder:
     def on_result(self, f, t):
         if self.state in ('INGAME', 'WAIT_RESULT'):
             self.finish(f, t)
+        elif self.state == 'IDLE' and self.t_gave_up is not None and self.t_gave_up == self.t_last_store and t - self.t_gave_up <= RESULT_WAIT:
+            # the scoreboard of the match just stored without it after all (no rule screen since): not a match of its own.
+            # Logged so a too short AFTER_SCREENS_WAIT shows up
+            self.log(f'[{t:8.1f}] result screen {t - self.t_gave_up:.0f}s after the match was stored without it: not stored again')
         elif self.state == 'IDLE' and t - self.t_last_store > 120:      # result without a timeline: the recorder started mid-match
             self.m = dict(t_rule=None, card_tpl=None, start_patches=[], samples=[], kf=[], bubbles=[], t0=t, notes='no rule screen')
             self.finish(f, t)
@@ -323,7 +379,7 @@ class Recorder:
         analysis = None if title is None else RULE_ANALYSIS.get(title, 'other')
         self.m = dict(ts=ts, t_rule=t, t_rule0=self.t_scr, rule_image=path, card_tpl=card_templates(read_cards(f)), start_patches=[], samples=[], kf=[], bubbles=[], t0=None, notes=None,
                       title_id=tid, title=title, analysis=analysis)
-        self.state = 'WAIT_HUD'; self.t_state = t; self.ring.clear(); self.rsp_t = None
+        self.state = 'WAIT_HUD'; self.t_state = t; self.ring.clear(); self.rsp_t = None; self.t_gave_up = None
         self.log(f'[{t:8.1f}] RULE SCREEN {title or tid or "(no rule name)"} ({analysis or "rule unknown: the timer decides"}) -> waiting for HUD')
 
     def retake_cards(self, f, t):
