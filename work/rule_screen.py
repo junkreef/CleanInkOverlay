@@ -24,9 +24,10 @@ TITLE_MIN_PX = 400                # fewer white px = no rule name there (a two-l
 def card_tops(f):
     """the top of each row of cards: FEST_CARD_TOPS when the text above the cards is there on both sides"""
     for y0, y1, x0, x1 in FEST_TEAM:
-        reg = f[y0:y1, x0:x1]
-        m = (reg.min(axis=2) > 200) & (reg.max(axis=2).astype(int) - reg.min(axis=2).astype(int) < 40)
-        m &= cv2.dilate((reg.max(axis=2) < 70).astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+        reg = f[y0:y1, x0:x1]; b, g, r = cv2.split(reg)    # cv2 per channel: ~10x faster than reg.min(axis=2) (every sample of a rule check)
+        lo, hi = cv2.min(cv2.min(b, g), r), cv2.max(cv2.max(b, g), r)
+        m = (lo > 200) & (cv2.subtract(hi, lo) < 40)
+        m &= cv2.dilate((hi < 70).astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
         if m.mean() < FEST_TEAM_MIN: return CARD_TOPS
     return FEST_CARD_TOPS
 

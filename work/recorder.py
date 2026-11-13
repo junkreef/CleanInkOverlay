@@ -43,6 +43,7 @@ from scan_screens import looks_like_rule
 from live_result_watch import looks_like_result
 from rule_screen import read_cards, title_signature
 import objective, area
+from rule_miss import MissWatch
 from medals import looks_like_medals, parse_medals
 from judge import read_label, read_judge
 from schedule import looks_like_schedule_update
@@ -181,6 +182,7 @@ class Recorder:
         self.rsp_t = None; self.prev_rsp = 0.0
         self.judge = []                                       # reads of the last judge screen: dict(t, result, label_score, my_pct, enemy_pct)
         self.judge_frame = None                               # (t, frame) of its first read with both %, kept as evidence
+        self.miss = MissWatch(store, log, self.stamp, self.glyphs)   # IDLE only: evidence of a battle whose rule screen was missed (work/rule_miss.py)
         self.n_mark = 0; self.t_replay = -1e9                 # replay viewer: samples in a row with its mark, when it was last confirmed
 
     def stamp(self, t):
@@ -232,6 +234,8 @@ class Recorder:
         if scr == 'judge': self.on_judge(f, t)
         if scr == 'rule' and self.state == 'WAIT_HUD' and not self.m.get('cards_at') and t - self.m['t_rule0'] >= RULE_CARDS_AT - 1e-6:
             self.retake_cards(f, t)
+        if self.state == 'IDLE': self.miss.idle(f, t, scr)             # diagnostics only: never starts or stores a match
+        elif self.miss.t0 is not None: self.miss.reset()
         s = self.state
         if s == 'WAIT_HUD':
             if scr == 'hud':
