@@ -201,9 +201,10 @@ class Recorder:
                 self.log(f'[{t:8.1f}] replay viewer (メモリープレイヤー) on screen: ignoring the match it plays ({self.state})')
             self.t_replay = t
         if not (mark or self.state in ('IDLE', 'WAIT_RESULT') and t - self.t_replay <= REPLAY_HOLD): return False
+        if self.scr in SETTLE: self.screen_gone(self.scr)       # a scoreboard / panel being counted: what it showed is not lost
         self.scr = 'replay'; self.n_scr = 0
         if self.state == 'WAIT_RESULT' and t - self.t_state > RESULT_WAIT:
-            self.log(f'[{t:8.1f}] no result screen, storing match without it'); self.finish(None, t)
+            self.log(f'[{t:8.1f}] no result screen, storing match without it'); self.t_gave_up = t; self.finish(None, t)
         return True
 
     def process(self, f, t):
