@@ -21,6 +21,7 @@
 | `judge.py`、`counts.py` | ジャッジくん画面の勝敗・%、ガチのカウント |
 | `panel.py`、`medals.py` | 個人パネル (自分の行)、表彰 |
 | `schedule.py` | 「スケジュールが更新されました」 |
+| `replay.py` | メモリープレイヤー (リプレイ) の左上のマーク。再生中の試合は記録しない ([recorder.md](recorder.md#メモリープレイヤーの再生)) |
 | `objective.py`、`area.py` | ガチヤグラ / ホコの線、ガチエリア / アサリのカウント ([ranked_rules.md](ranked_rules.md)) |
 | `weapon_match.py`、`weapon_icons.py` | ブキアイコン ([weapon_icons.md](weapon_icons.md)) |
 | `signatures.py` | 署名ライブラリ ([signatures.md](signatures.md)) |
