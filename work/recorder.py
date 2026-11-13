@@ -19,6 +19,8 @@ when it has been stable for a few samples. The state only says what we are accum
               lobby) the match keeps the judge screen's win / lose and paint %, and the own row + stage from the
               own result panel (the 表彰 screen, work/panel.py)
 A rule screen while INGAME / WAIT_RESULT means the previous match was aborted or its result was skipped.
+A past match played in the replay viewer (メモリープレイヤー, its mark top left: work/replay.py) is not recorded at all
+(watch_replay).
 
 Rules: the rule name on the rule screen decides (RULE_ANALYSIS); without one (not named yet in the Web UI, or no rule
 screen seen) the timer at the start does: 3:00 = ナワバリ, more = another rule. ナワバリ runs exactly as before.
@@ -45,6 +47,7 @@ from judge import read_label, read_judge
 from schedule import looks_like_schedule_update
 from counts import read_judge_counts, read_scoreboard_counts
 from panel import read_panel, learn_weapon
+from replay import replay_mark
 import hud
 
 ROOT = os.path.join(os.path.dirname(__file__), '..')
@@ -78,6 +81,9 @@ MAP_AFTER = 0.2                   # s after the map (top left ×) was last seen:
                                   # is still see-through over the blurred ink (all 7 false special frames of 53 own deaths were within 0.05 s of the map)
 OBJ_MIN_SHARE = 0.3               # an unnamed rule keeps its track / area reads when they cover this share of its HUD seconds (track on ガチエリア: 0)
 END_GRACE = 15.0                  # s without HUD after 0:00 / overtime before a non-ナワバリ match counts as over (a splat in overtime shows the map ~10 s)
+REPLAY_CONFIRM = 3                # samples in a row with the replay viewer's mark (work/replay.py) that make it a replay (logged once)
+REPLAY_HOLD = 30.0                # s after the mark was last confirmed during which IDLE / WAIT_RESULT still ignore every screen: the mark is
+                                  # gone from the judge screen and the team pose that close a playback (~15 s, 2026-04-08_00-24-01.mp4 207.8-222.8 s)
 
 
 def tm(bgr, tpl):
@@ -157,13 +163,36 @@ class Recorder:
         self.rsp_t = None; self.prev_rsp = 0.0
         self.judge = []                                       # reads of the last judge screen: dict(t, result, label_score, my_pct, enemy_pct)
         self.judge_frame = None                               # (t, frame) of its first read with both %, kept as evidence
+        self.n_mark = 0; self.t_replay = -1e9                 # replay viewer: samples in a row with its mark, when it was last confirmed
 
     def stamp(self, t):
         return datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S') if self.source == 'live' else f'{os.path.basename(self.source)}_{t:07.1f}'
 
     # ------------------------------------------------------------ per frame
+    def watch_replay(self, f, t):
+        """the replay viewer (メモリープレイヤー) plays a past match with all its screens: nothing of it is recorded.
+        A frame with its mark is skipped whatever the state (a match in progress loses one sample to a false one; live
+        matches score <= 0.38, THR 0.6). REPLAY_CONFIRM samples in a row make it a replay: then IDLE / WAIT_RESULT also
+        skip the frames of the next REPLAY_HOLD s (its judge screen and team pose carry no mark), and WAIT_HUD / INGAME
+        look at the HUD only. No state is changed: a match waiting for its result is stored by RESULT_WAIT as usual.
+        -> True when this frame is skipped"""
+        mark = replay_mark(f)
+        self.n_mark = self.n_mark + 1 if mark else 0
+        if self.n_mark >= REPLAY_CONFIRM:
+            if t - self.t_replay > REPLAY_HOLD:
+                self.log(f'[{t:8.1f}] replay viewer (メモリープレイヤー) on screen: ignoring the match it plays ({self.state})')
+            self.t_replay = t
+        if not (mark or self.state in ('IDLE', 'WAIT_RESULT') and t - self.t_replay <= REPLAY_HOLD): return False
+        self.scr = 'replay'; self.n_scr = 0
+        if self.state == 'WAIT_RESULT' and t - self.t_state > RESULT_WAIT:
+            self.log(f'[{t:8.1f}] no result screen, storing match without it'); self.finish(None, t)
+        return True
+
     def process(self, f, t):
-        scr = classify(f, SCREENS[self.state])
+        if self.watch_replay(f, t): return
+        screens = SCREENS[self.state]
+        if t - self.t_replay <= REPLAY_HOLD: screens = tuple(s for s in screens if s in ('map', 'hud'))   # WAIT_HUD / INGAME just after a replay
+        scr = classify(f, screens)
         if scr is None and self.m and self.state in ('WAIT_HUD', 'INGAME') and self.m.get('analysis') != 'turf':
             vis, rem, _ = hud.timer_hud(f, self.glyphs)       # no paint points top right: the timer box tells the HUD
             if vis and self.state == 'INGAME' and self.m.get('nonturf') and rem is not None and abs(rem - (self.m['dur'] - (t - self.m['t0']))) > 3:
