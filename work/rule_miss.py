@@ -8,7 +8,8 @@ writes evidence: it never starts, changes or stores a match.
 While IDLE, every sample:
 - a small frame every RING_STEP s for the last RING_SECONDS (the rule screen ends ~10-20 s before the timer starts)
 - every CHECK_STEP s the three checks of looks_like_rule (scan_screens.rule_checks): the samples that pass one or two of
-  them, and the full-size frame that came closest to a rule screen
+  them (the tag or the description among them: the cards' check passes on busy frames), and the full-size frame that came
+  closest to a rule screen
 - the HUD's timer: while its black box is there, the digits are read (every sample for RUN_READ s, then every SLOW_READ s)
   until two reads decide the run of the box
 A battle has evidently begun while IDLE when the first two timer reads of a run are at a start value (3:00 / 5:00), no
@@ -61,7 +62,8 @@ def detail(f):
 def describe(c):
     d685, d755 = c['desc_dark']
     return (f'tag dark {c["tag_dark"]:.2f} white {c["tag_white"]:.2f}{"" if c["tag"] else " (FAIL)"}, desc {d685:.2f}/{d755:.2f}{"" if c["desc"] else " (FAIL)"}, '
-            f'ids {sum(x >= 100 for x in c["id_contrast"])}/8 [{" ".join(str(int(x)) for x in c["id_contrast"])}]{"" if c["ids"] else " (FAIL)"}')
+            f'ids {sum(x >= 100 for x in c["id_contrast"])}/8 [{" ".join(str(int(x)) for x in c["id_contrast"])}] '
+            f'titles {sum(x >= 100 for x in c["title_contrast"])}/8{"" if c["ids"] else " (FAIL)"}')
 
 
 class MissWatch:
@@ -98,7 +100,8 @@ class MissWatch:
         while self.ring and t - self.ring[0][0] > RING_SECONDS: self.ring.popleft()
         if t - self.t_checks >= CHECK_STEP - 0.05:                    # every 3rd sample: a rule screen lasts 2.0-6.5 s
             self.t_checks = t
-            c = rule_checks(f); k = c['tag'] + c['desc'] + c['ids']
+            c = rule_checks(f)                                         # the cards alone are no sign: 7 title lines pass on a
+            k = c['tag'] + c['desc'] + c['ids'] if c['tag'] or c['desc'] else 0   # busy frame (the lobby, 0004_lobby_matchinfo)
             if 0 < k < 3: self.partial.append((t, c))
             key = (k, sum(x >= 100 for x in c['id_contrast']), -abs(c['tag_dark'] - 0.84))
             if self.best and t - self.best[1] > RING_SECONDS: self.best = None

@@ -5,13 +5,31 @@ import cv2, numpy as np, sys, os, time
 sys.path.insert(0, os.path.dirname(__file__))
 from live_result_watch import looks_like_result
 from result_parser import dark_share
-from rule_screen import CARD_X, card_tops
+from rule_screen import CARD_X, ID_BAND, card_tops       # ID_BAND: the '#nnnn' at the bottom-left of a card
 
 TAG_DARK = (0.7, 0.95); TAG_WHITE = (0.06, 0.25)   # black 「ルール」 tag: dark 0.84, white text 0.13 on every sample
 DESC_YS = (685, 755); DESC_MIN = 0.45               # black one-line description tag (dark 0.62) at y 685-730; in an イベントマッチ
                                                     # a pink event-name tag (「ツキイチ・イベントマッチ」) takes that place and
                                                     # pushes it 70 px down (dark 0.15 at 685, 0.5+ at 755)
 ID_CONTRAST = 100; IDS_MIN = 6                      # '#nnnn' of a card: 2-98 percentile spread of its grey levels; cards that have it
+TITLE_BAND = (8, 40, 8, 300)                        # y0, y1, x0, x1 in a card: the title line (称号) at its top-left, on every card
+TITLES_MIN = 7                                      # an Xマッチ card has no '#nnnn' (2026-11-21_22-52-55), and the art of
+                                                    # some plates there passes for one (0-3 of 8): 7 of the 8 titles stand for
+                                                    # the cards instead. Titles >= 100: 7+ on 678 of 702 saved rule screens (a
+                                                    # title on a light plate is fainter, 5% of cards < 95), on 4 of the 5 live
+                                                    # Xマッチ misses, from 0.3-0.5 s in on the 2 recorded ones. While the cards
+                                                    # fade in, 7 titles come 0.1-0.3 s before 6 '#nnnn' on 6 of 14 rule
+                                                    # screens of 9 other recordings (never with fewer than 3 '#nnnn'). The
+                                                    # バンカラチャレンジ's 「勝ちぬけ!」 screen passes the tag and description:
+                                                    # 0 '#nnnn', 0 titles (2026-10-28_23-06-42 at 1543 s)
+
+
+def card_contrast(f, band):
+    """2-98 percentile spread of the grey levels of a band of each card (y0, y1, x0, x1 in the card), ally then enemy"""
+    y0, y1, a, b = band; tops = card_tops(f)
+    g = np.stack([cv2.cvtColor(f[t + y0:t + y1, x0 + a:x0 + b], cv2.COLOR_BGR2GRAY).ravel() for x0 in CARD_X.values() for t in tops])
+    lo, hi = np.percentile(g, (2, 98), axis=1)     # all 8 in one call: the same values as one np.percentile per crop, 1/16 of the time
+    return [float(v) for v in hi - lo]
 
 
 def rule_tag(f):
@@ -27,10 +45,19 @@ def rule_desc(f):
 
 def rule_ids(f):
     """contrast of the '#nnnn' at the bottom-left of each card (white on dark cards, dark brown on bright ones), ally then enemy"""
-    tops = card_tops(f)
-    g = np.stack([cv2.cvtColor(f[t + 118:t + 142, x0 + 12:x0 + 75], cv2.COLOR_BGR2GRAY).ravel() for x0 in CARD_X.values() for t in tops])
-    lo, hi = np.percentile(g, (2, 98), axis=1)     # all 8 in one call: the same values as one np.percentile per crop, 1/16 of the time
-    return [float(v) for v in hi - lo]
+    return card_contrast(f, ID_BAND)
+
+
+def rule_titles(f):
+    """contrast of the title line at the top-left of each card, ally then enemy"""
+    return card_contrast(f, TITLE_BAND)
+
+
+def cards_there(ids, titles):
+    """the 8 cards are in place: 6 with their '#nnnn', or 7 with their title (an Xマッチ has no '#nnnn').
+    titles: the list, or a function giving it (taken only when the '#nnnn' are not enough)"""
+    if sum(c >= ID_CONTRAST for c in ids) >= IDS_MIN: return True
+    return sum(c >= ID_CONTRAST for c in (titles() if callable(titles) else titles)) >= TITLES_MIN
 
 
 def looks_like_rule(f):
@@ -38,15 +65,16 @@ def looks_like_rule(f):
     d, w = rule_tag(f)
     if not (TAG_DARK[0] < d < TAG_DARK[1] and TAG_WHITE[0] < w < TAG_WHITE[1]): return False
     if max(rule_desc(f)) < DESC_MIN: return False
-    return sum(c >= ID_CONTRAST for c in rule_ids(f)) >= IDS_MIN
+    return cards_there(rule_ids(f), lambda: rule_titles(f))
 
 
 def rule_checks(f):
     """all three checks of looks_like_rule without stopping at the first that fails, for the diagnostics of a missed rule
-    screen (recorder.MissWatch): -> dict(tag, desc, ids: passed or not, and the measured values). ~0.3 ms"""
-    d, w = rule_tag(f); desc = rule_desc(f); ids = rule_ids(f)
+    screen (recorder.MissWatch): -> dict(tag, desc, ids: passed or not (ids = the cards, by '#nnnn' or titles), and the
+    measured values). ~0.7 ms (the titles 0.4 ms of it; looks_like_rule reads them only when the '#nnnn' are not enough)"""
+    d, w = rule_tag(f); desc = rule_desc(f); ids = rule_ids(f); titles = rule_titles(f)
     return dict(tag=bool(TAG_DARK[0] < d < TAG_DARK[1] and TAG_WHITE[0] < w < TAG_WHITE[1]), desc=bool(max(desc) >= DESC_MIN),
-                ids=sum(c >= ID_CONTRAST for c in ids) >= IDS_MIN, tag_dark=d, tag_white=w, desc_dark=desc, id_contrast=ids)
+                ids=cards_there(ids, titles), tag_dark=d, tag_white=w, desc_dark=desc, id_contrast=ids, title_contrast=titles)
 
 
 def main():

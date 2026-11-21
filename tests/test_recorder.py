@@ -261,6 +261,29 @@ def test_the_cards_are_taken_once_they_have_faded_in_at_every_phase():
         assert R.RULE_CARDS_AT <= rec.m['cards_at'] - appear < R.RULE_CARDS_AT + 0.1 + 1e-6, (phase, rec.m['cards_at'])
 
 
+def test_an_x_match_rule_screen_has_no_card_numbers():
+    """an Xマッチ card has no '#nnnn' at its bottom-left (2026-11-21 23:00, live): its title line stands for it - but
+    not while the cards still fade in (2026-11-21_22-52-55 at 10.4 s)"""
+    from scan_screens import rule_checks, IDS_MIN, TITLES_MIN
+    x = frame('x_rule_yagura.png'); c = rule_checks(x)
+    assert sum(v >= 100 for v in c['id_contrast']) < IDS_MIN and sum(v >= 100 for v in c['title_contrast']) >= TITLES_MIN
+    assert R.looks_like_rule(x) and R.classify(x) == 'rule'
+    assert not R.looks_like_rule(frame('x_rule_fading_in.jpg'))
+
+
+def test_an_x_match_starts_at_every_phase():
+    """the rule screen of an Xマッチ starts the match (it never did: every Xマッチ was stored from its result screen only,
+    'no rule screen'), its rule named, the cards taken again once they are in"""
+    appear = 1.0
+    for phase in range(6):
+        lines = []; rec = R.Recorder(VIDEO, FakeStore(), dry=True, log=lines.append)
+        for k in range(30):
+            t = phase / 60 + k * 0.1
+            rec.process(frame('x_rule_yagura.png') if t >= appear else OTHER_FRAME, t)
+        assert rec.state == 'WAIT_HUD' and rec.m['title'] == 'ガチヤグラ' and rec.m['analysis'] == 'track', (phase, lines)
+        assert R.RULE_CARDS_AT <= rec.m['cards_at'] - appear < R.RULE_CARDS_AT + 0.1 + 1e-6, (phase, rec.m['cards_at'])
+
+
 def test_the_map_hides_the_hud_at_every_phase():
     """the × top left tells the map; its samples and those of the next MAP_AFTER s (the HUD half back as it closes) are
     no HUD. A 0.25 s look at the map is seen at each of the 6 sampling phases"""
