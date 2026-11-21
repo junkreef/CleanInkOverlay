@@ -27,7 +27,7 @@
 | `signatures.py` | 署名ライブラリ ([signatures.md](signatures.md)) |
 | `live_capture.py` | キャプチャデバイスの検索 |
 | `phase_check.py` | 録画を 6 つの位相で通して比べる確認用 ([recorder.md](recorder.md#サンプリングと位相)) |
-| `eval_icons.py`、`harvest_icons.py`、`rebuild_signatures.py` | 開発用の評価・作り直しのスクリプト |
+| `eval_icons.py`、`harvest_icons.py`、`rebuild_signatures.py`、`merge_signatures.py` | 開発用の評価・作り直し・取り込みのスクリプト |
 
 Store はプロセス内のイベントバスも持つ (`store.events.subscribe(topic, cb)` / `publish`)。topic は `match_saved` / `match_deleted` / `signatures_changed` / `weapon_icons_changed`。バックエンドはこれをそのまま WebSocket に流す。別プロセスで動くレコーダーのために、1 秒おきの最新の試合 id の監視も併用する。
 

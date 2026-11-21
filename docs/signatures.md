@@ -60,6 +60,21 @@
 - 保存画面がもう無い未ラベルの署名は `POST /api/signatures/prune` (`Store.prune_signatures`) で消せる。次にその文字列が出たとき、画像付きでまた登録される。
 - コードから付けるなら `signatures.Library().label(id, 名前)` → `save()`。ただしバックエンドの動いている間は Web UI から付ける (Store がライブラリを持っているため)。
 
+## 他の人が付けた名前を取り込む
+
+配布版では、ユーザーが付けた名前はデータフォルダの `%LOCALAPPDATA%\CleanInkOverlay\assets\signatures.json` に入る (プログラムのフォルダは書き換えない。`app/paths.py`)。このファイルは同梱のライブラリとの差分 (新しい id と、同梱と違う名前) だけなので、上書きせずに `work/merge_signatures.py` でマージする。
+
+```
+python work/merge_signatures.py もらった.json [さらに.json ...]            # 試し実行 (変わるものを表示)
+python work/merge_signatures.py もらった.json [さらに.json ...] --apply    # assets/signatures.json に書く
+```
+
+- 名前の付いた項目だけを見る。id がこちらに無く、こちらのどれとも同じ文字に読めなければ `added` (同じ文字でも画素が少し違えば id は別になる。署名が 2 つあっても判定は相関のいちばん高いものを選ぶ)、こちらの名前の無い id なら `named`、もう知っていれば `known`。
+- 「同じ文字に読める」はレコーダーと同じしきい値で判定する (表彰 0.8、ステージ・ルール 0.85、モード 0.95、ルール画面 0.8、パネルのブキ 0.97)。ガチホコブロック No.1 とガチエリア関与 No.1 は 0.72 で、別の表彰として足される。
+- 同じ id や同じ文字に読める署名にこちらと違う名前が付いていたら `CONFLICT` と出して取り込まない。保存画面を見て決める。署名の長さが違う (古い切り出しの) ものは `skipped`。
+- バックエンドを止めて実行する。マージで名前の付いた id の試合は、このチェックアウトの DB では埋まらない (Web UI で付けたときだけ埋まる)。配布版のユーザーは次の起動で埋まる (`Library.adopted`)。
+- ブキのアイコン (`%LOCALAPPDATA%\CleanInkOverlay\assets\weapon_icons_captured\`) は元のサンプル (`data/icon_samples`) が配られないので、このスクリプトでは扱わない。
+
 ## 作り直し
 
 文字の切り出し方を変えたら、`work/rebuild_signatures.py` で保存済みの画面から作り直す。保存済みのリザルト画面 (ステージ / モード / ルール) と表彰画面をいまのコードで読み直し、DB が知っている名前でラベルを付け、DB の参照 (`medals.sig_id`、raw_json の `*_id`) を新しい id に移す。`panel_weapon` は残す。
