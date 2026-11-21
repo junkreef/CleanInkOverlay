@@ -2,7 +2,7 @@
 line and its frames; a normal start, a recorder started mid-match, the HUD back after the map leave nothing. Never a match.
     uv run pytest tests/test_rule_miss.py
 """
-import os, sys
+import os, re, sys
 import cv2, numpy as np
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if os.path.join(ROOT, 'work') not in sys.path: sys.path.insert(0, os.path.join(ROOT, 'work'))
@@ -17,9 +17,16 @@ INTRO = frame('0048_match_intro_players.png')
 
 
 def without_ids(f, n=3):
-    """the rule screen with the '#nnnn' of n cards gone: the tag and description pass, the cards do not (5 of 8)"""
+    """the rule screen with the '#nnnn' of n cards gone: the tag and description pass, the '#nnnn' do not (5 of 8)"""
     f = f.copy()
     for t in (285, 435, 585)[:n]: f[t + 118:t + 142, 22:85] = 40
+    return f
+
+
+def without_titles(f, n=3):
+    """... and the title line of the same n cards: no sign of them left (a card still fading in)"""
+    f = f.copy()
+    for t in (285, 435, 585)[:n]: f[t + 8:t + 40, 18:310] = 40
     return f
 
 
@@ -69,11 +76,14 @@ def start_at(t_go, dur=180):
 
 
 def test_rule_checks_say_what_looks_like_rule_says():
-    for f in (RULE, LOBBY, HUD, INTRO, frame('gachi_rule_area.png'), frame('fest_rule.png'), without_ids(RULE)):
+    for f in (RULE, LOBBY, HUD, INTRO, frame('gachi_rule_area.png'), frame('fest_rule.png'), without_ids(RULE),
+              frame('x_rule_yagura.png'), frame('x_rule_fading_in.jpg')):
         c = rule_checks(f)
         assert (c['tag'] and c['desc'] and c['ids']) == looks_like_rule(f)
     c = rule_checks(without_ids(RULE))
-    assert c['tag'] and c['desc'] and not c['ids'] and sum(x >= 100 for x in c['id_contrast']) == 5
+    assert c['tag'] and c['desc'] and c['ids'] and sum(x >= 100 for x in c['id_contrast']) == 5   # the titles are there
+    c = rule_checks(without_ids(without_titles(RULE)))
+    assert c['tag'] and c['desc'] and not c['ids'] and sum(x >= 100 for x in c['title_contrast']) == 5
 
 
 def test_a_battle_started_in_idle_leaves_evidence_at_every_phase(monkeypatch):
@@ -81,13 +91,14 @@ def test_a_battle_started_in_idle_leaves_evidence_at_every_phase(monkeypatch):
     frames, within 0.2 s of the HUD at each of the 6 sampling phases; no match is started or stored"""
     for phase in range(6):
         rec, store, lines = recorder(monkeypatch, start_at(60.0))
-        feed(rec, [(0, 45, LOBBY), (45, 50, without_ids(RULE)), (50, 60, INTRO), (60, 70, HUD)], phase)
+        feed(rec, [(0, 45, LOBBY), (45, 50, without_ids(without_titles(RULE))), (50, 60, INTRO), (60, 70, HUD)], phase)
         miss = [l for l in lines if 'RULE SCREEN MISSED' in l]
         assert len(miss) == 1, (phase, lines)
         t = float(miss[0][1:9])
         assert 60.0 < t <= 60.0 + 0.2 + 1e-6, (phase, t)                  # the second read of 3:00
-        assert 'at 3:00' in miss[0] and 'failed: ids' in miss[0] and 'frame 1920x1080' in miss[0], miss[0]
-        assert 'closest' in miss[0] and 'ids 5/8' in miss[0], miss[0]
+        assert 'at 3:00' in miss[0] and 'frame 1920x1080' in miss[0], miss[0]
+        assert re.search(r'\(failed: ids \d+\)', miss[0]), miss[0]       # the faded cards only: the lobby passes no tag / desc
+        assert 'closest' in miss[0] and 'ids 5/8' in miss[0] and 'titles 5/8 (FAIL)' in miss[0], miss[0]
         (name, shape), = store.evidence
         assert name.endswith('_rule_missed') and shape[1] == 1920 and shape[0] % 180 == 0 and shape[0] >= 1800   # >= 60 tiles of 320x180, 6 across
         kinds = [k for _, k, _ in store.images]
